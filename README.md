@@ -1,33 +1,33 @@
-# Grammaire B2 — application interactive
+# Grammaire B2 — interactive app
 
-Application React pour réviser la grammaire française au niveau B2 :
-26 chapitres complets (subjonctif, conditionnel, hypothèse, voix passive, pronoms,
-relatifs, logique de la phrase, déterminants, adverbes, prépositions…),
-chacun avec une leçon illustrée et 8 exercices interactifs (fill-in, QCM,
-transformation de phrase).
+A React app for reviewing French grammar at the B2 level:
+26 complete chapters (subjunctive, conditional, hypothesis, passive voice, pronouns,
+relatives, sentence logic, determiners, adverbs, prepositions…),
+each with an illustrated lesson and 8 interactive exercises (fill-in, multiple
+choice, sentence transformation).
 
-## Structure des fichiers
+## File structure
 
 ```
 .
-├── GrammaireB2.jsx    Composant React (présentation + logique)
-├── chapters.js        Données : leçons et exercices
-└── README.md          Ce fichier
+├── GrammaireB2.jsx    React component (presentation + logic)
+├── chapters.js        Data: lessons and exercises
+└── README.md          This file
 ```
 
-La séparation est volontaire : tu peux éditer, traduire, ajouter ou retirer
-des chapitres en modifiant uniquement `chapters.js` sans toucher au code.
+The separation is intentional: you can edit, translate, add or remove
+chapters by modifying only `chapters.js` without touching the code.
 
-## Dépendances
+## Dependencies
 
 - `react` (>= 17)
-- `lucide-react` (icônes)
-- La police Fraunces est chargée dynamiquement depuis Google Fonts au montage.
+- `lucide-react` (icons)
+- The Fraunces font is loaded dynamically from Google Fonts on mount.
 
-Les classes Tailwind ne sont pas utilisées : tout le style est en JS inline.
-Aucun framework CSS requis.
+Tailwind classes are not used: all styling is inline JS.
+No CSS framework required.
 
-## Déploiement rapide avec Vite
+## Quick deployment with Vite
 
 ```bash
 npm create vite@latest grammaire-b2 -- --template react
@@ -35,8 +35,8 @@ cd grammaire-b2
 npm install lucide-react
 ```
 
-Puis copie `GrammaireB2.jsx` et `chapters.js` dans `src/`, et remplace
-`src/App.jsx` par :
+Then copy `GrammaireB2.jsx` and `chapters.js` into `src/`, and replace
+`src/App.jsx` with:
 
 ```jsx
 import GrammaireB2 from "./GrammaireB2.jsx";
@@ -45,32 +45,32 @@ export default function App() {
 }
 ```
 
-Lance :
+Run:
 
 ```bash
 npm run dev
 ```
 
-Pour la production :
+For production:
 
 ```bash
 npm run build
 ```
 
-Le dossier `dist/` contient une appli statique déployable sur n'importe quel
-hébergeur (Netlify, Vercel, GitHub Pages, S3, etc.).
+The `dist/` folder contains a static app that can be deployed to any
+host (Netlify, Vercel, GitHub Pages, S3, etc.).
 
-## Format des données
+## Data format
 
-Chaque chapitre dans `chapters.js` suit la structure :
+Each chapter in `chapters.js` follows this structure:
 
 ```js
 {
   id: "subjonctif-present",
   number: 1,
-  section: "Temps et modes",
-  title: "Le subjonctif",       // partie en encre noire
-  titleEm: "présent",            // partie en italique rouge
+  section: "Tenses and moods",
+  title: "The subjunctive",      // black-ink portion
+  titleEm: "present",             // red italic portion
   lesson: {
     intro: "...",
     formation: ["..."],
@@ -80,73 +80,73 @@ Chaque chapitre dans `chapters.js` suit la structure :
     ],
   },
   items: [
-    // Trois types d'exercices :
+    // Three types of exercises:
 
-    // 1. Fill-in (à trou)
+    // 1. Fill-in (blank)
     {
       before: "Bien que ce projet ",
       hint: "être",
       after: " ambitieux, nous le mènerons à terme.",
       answers: ["soit"],
       rule: "...",
-      consolidation: { /* même structure */ }
+      consolidation: { /* same structure */ }
     },
 
-    // 2. QCM
+    // 2. Multiple choice
     {
       type: "qcm",
-      prompt: "Quel pronom convient ?",
+      prompt: "Which pronoun fits?",
       context: "Je m'___ souviens parfaitement.",
       options: ["le", "en", "y"],
       correctIndex: 1,
       rule: "...",
-      consolidation: { /* idem, avec type: "qcm" */ }
+      consolidation: { /* same, with type: "qcm" */ }
     },
 
     // 3. Transformation
     {
       type: "transform",
-      instruction: "Réécrivez à la voix passive.",
+      instruction: "Rewrite in the passive voice.",
       source: "Un journaliste a révélé l'affaire.",
       answers: ["L'affaire a été révélée par un journaliste"],
       rule: "...",
-      consolidation: { /* idem, avec type: "transform" */ }
+      consolidation: { /* same, with type: "transform" */ }
     },
   ],
 }
 ```
 
-### Vérification des réponses
+### Answer checking
 
-Pour les `fill` et `transform`, la comparaison est insensible à la casse, à la
-ponctuation finale et aux apostrophes typographiques. Si plusieurs réponses
-sont acceptables (ex. avec/sans complément), ajoute-les toutes dans le tableau
-`answers`.
+For `fill` and `transform`, comparison is case-insensitive and ignores
+trailing punctuation and typographic apostrophes. If several answers are
+acceptable (e.g. with/without a complement), add them all to the `answers`
+array.
 
-Pour les `qcm`, `correctIndex` est l'index de la bonne réponse dans `options`
-(0 pour la première).
+For `qcm`, `correctIndex` is the index of the correct answer in `options`
+(0 for the first).
 
-### Le « cas voisin »
+### The "neighboring case"
 
-Chaque `item` doit avoir une propriété `consolidation` avec la même structure.
-Quand l'utilisateur se trompe, l'app affiche la règle puis lui propose ce
-deuxième item pour consolider la même notion.
+Each `item` must have a `consolidation` property with the same structure.
+When the user makes a mistake, the app displays the rule and then offers
+this second item to consolidate the same concept.
 
-## Ajouter un chapitre
+## Adding a chapter
 
-1. Ouvre `chapters.js`.
-2. Copie un chapitre existant.
-3. Modifie `id`, `number`, `section`, `title`, `titleEm`, et le contenu.
-4. Place l'objet à la bonne position dans le tableau `CHAPTERS` — l'ordre
-   d'affichage suit l'ordre du tableau, regroupé par `section`.
+1. Open `chapters.js`.
+2. Copy an existing chapter.
+3. Modify `id`, `number`, `section`, `title`, `titleEm`, and the content.
+4. Place the object at the correct position in the `CHAPTERS` array — the
+   display order follows the array order, grouped by `section`.
 
-Pas besoin de redémarrer le serveur avec Vite : le hot-reload prend en charge
-la modification immédiatement.
+No need to restart the server with Vite: hot-reload picks up the change
+immediately.
 
-## Charger les données depuis une API (optionnel)
+## Loading data from an API (optional)
 
-Si tu préfères héberger les chapitres sur un serveur (CMS, API, JSON statique
-sur un CDN), remplace l'import par un `fetch` :
+If you prefer to host the chapters on a server (CMS, API, static JSON on
+a CDN), replace the import with a `fetch`:
 
 ```jsx
 import { useEffect, useState } from "react";
@@ -156,14 +156,14 @@ export default function GrammaireB2() {
   useEffect(() => {
     fetch("/api/chapters.json").then(r => r.json()).then(setChapters);
   }, []);
-  if (!chapters) return <p>Chargement…</p>;
-  // … passer chapters au lieu de CHAPTERS
+  if (!chapters) return <p>Loading…</p>;
+  // … pass chapters instead of CHAPTERS
 }
 ```
 
-Tu devras alors convertir `chapters.js` en `chapters.json` (export → simple
-tableau JSON, retirer les commentaires).
+You'll then need to convert `chapters.js` into `chapters.json` (export →
+plain JSON array, remove the comments).
 
-## Licence
+## License
 
-Code et contenu pédagogique : libres d'usage pour tes besoins personnels.
+Code and educational content: free to use for personal needs.

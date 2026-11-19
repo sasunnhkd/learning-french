@@ -1,0 +1,316 @@
+# Phase 0 inventory: Laravel backend (`backend/`)
+
+Read on 2026-11-19 from the working tree on branch `migration/rust`. That is
+the uncommitted state of `main`, and `backend/` is untracked. Sources are cited
+as repo paths. "Phase 1 to capture" marks an exact string or behaviour that
+must be recorded from the running app, not guessed.
+
+## 1. Routes
+
+Source: `php artisan route:list --json`, `backend/routes/*.php`,
+`backend/bootstrap/app.php`.
+
+### 1.1 Application routes (`routes/api.php`, prefix `/api`, group `api`)
+
+The `api` group holds only `SubstituteBindings`. There is no throttle and no
+`statefulApi()`. Protected routes add `Authenticate:sanctum`.
+
+| # | Method | URI | Action | Auth | Validation | Success | Errors |
+|---|---|---|---|---|---|---|---|
+| R1 | POST | `/api/auth/login` | `AuthController@login` | none | `password: required\|string` | 200 `{"token": "<id>\|<48 chars>"}` | 422 `errors.password = ["Invalid password."]` when `EDITOR_PASSWORD` is empty or differs. Compared with `hash_equals`. |
+| R2 | POST | `/api/auth/logout` | `AuthController@logout` | sanctum | none | 200 `{"ok": true}`. Deletes the current token only. | 401 |
+| R3 | GET | `/api/chapters` | `ChapterController@index` | sanctum | none | 200 `[{id, number, section, title, titleEm, position}]`, ordered by `position`, then `number` | 401 |
+| R4 | GET | `/api/chapters/{id}` | `ChapterController@show` | sanctum | none | 200 chapter shape (§2.1) | 401, 404 (`findOrFail`, Phase 1 to capture the body) |
+| R5 | POST | `/api/chapters` | `ChapterController@store` | sanctum | §1.3, with `id` unique | **201** chapter shape | 401, 422 |
+| R6 | PUT | `/api/chapters/{id}` | `ChapterController@update` | sanctum | §1.3 + an `id` equal to the route id | 200 chapter shape (after `refresh()`) | 401, 404, 422. An `id` change gives `errors.id = ["The id of an existing chapter cannot be changed."]`. |
+| R7 | DELETE | `/api/chapters/{id}` | `ChapterController@destroy` | sanctum | none | 200 `{"ok": true}`. Hard delete. | 401, 404 |
+| R8 | POST | `/api/chapters/reorder` | `ChapterController@reorder` | sanctum | `order: required\|array`, `order.*: string` | 200 `{"ok": true}`. In one transaction, each `id` gets `position = index`. Unknown ids are silently ignored. | 401, 422 |
+| R9 | GET | `/api/uploads` | `UploadController@index` | sanctum | none | 200 `[{id, path, url, original_name, mime, size, created_at}]`, ordered by `created_at` desc | 401 |
+| R10 | POST | `/api/uploads` | `UploadController@store` | sanctum | `file: required\|file\|max:5120\|mimetypes:image/png,image/jpeg,image/webp,image/gif,image/svg+xml` (multipart) | **201** `{id, path, url, mime, size}` | 401, 422, 500 (path guard, `abort(500, …)`) |
+| R11 | DELETE | `/api/uploads/{id}` | `UploadController@destroy` | sanctum | none | 200 `{"ok": true}`. Unlinks the file, then deletes the row. | 401, 404 |
+| R12 | POST | `/api/export` | `ExportController` (invokable) | sanctum | none | 200 `{count, path, written, chapters[]}`. Writes the file (§6). | 401 |
+
+Route order: `POST /api/chapters/reorder` and `/api/chapters/{id}` don't
+collide, because `{id}` has no POST. A `POST /api/chapters/<x>` gets 405
+(Phase 1 to capture the body).
+
+### 1.2 Framework and web routes
+
+| # | Method | URI | Source | Used by the SPA? |
+|---|---|---|---|---|
+| F1 | GET/HEAD | `/` | `routes/web.php`, Blade `welcome` (scaffold page, uses `@vite` only if `public/build/manifest.json` or `public/hot` exists) | No |
+| F2 | GET/HEAD | `/up` | `bootstrap/app.php` `health: '/up'` | No (health check) |
+| F3 | GET/HEAD | `/sanctum/csrf-cookie` | Sanctum, `web` group | No (the SPA uses bearer tokens) |
+| F4 | GET/HEAD | `/storage/{path}` | `filesystems.disks.local.serve = true`, signed-URL serving of `storage/app/private` | No |
+| F5 | PUT | `/storage/{path}` | same, signed upload | No |
+
+### 1.3 Chapter payload validation (`ChapterController::validatePayload`)
+
+```
+id                               required|string|max:120|regex:/^[a-z0-9-]+$/ (+ unique:chapters,id on create)
+number                           required|integer|min:1
+section                          required|string|max:120
+title                            required|string|max:200
+titleEm                          nullable|string|max:200
+position                         sometimes|nullable|integer
+lesson                           present|array
+lesson.intro                     nullable|string
+lesson.formation                 present|array          lesson.formation.*  nullable|string
+lesson.irregulars                present|array          .*  array ; .*.v, .*.forms  nullable|string
+lesson.triggers                  present|array          .*  array ; .*.title/.body/.note  nullable|string
+lesson.triggers.*.subcases       nullable|array         .*  array ; .*.label/.example  nullable|string
+items                            present|array          items.*  array
+items.*.type                     nullable|in:fill,qcm,transform
+items.*.rule                     nullable|string
+items.*.consolidation            nullable|array
+```
+
+**D-03 (spec/SPEC.md §4).** `$request->validate()` returns only the keys
+that have rules. `items.*.before/hint/after/answers/prompt/context/options/
+correctIndex/instruction/source` and everything inside `consolidation` have no
+rule, so a save drops them. This is confirmed by the damaged
+`subjonctif-present` row.
+
+`toRow()` decides `position` like this:
+- if the request gives a non-null `position`, use it;
+- otherwise, if the chapter exists, keep its position;
+- otherwise use `max(position) + 1`, or `0` when the table is empty.
+
+It writes `payload = {id, number, section, title, titleEm, lesson, items}`,
+taken from the validated data.
+
+### 1.4 Error format (Laravel defaults, `withExceptions` is empty)
+
+- 422 `ValidationException`:
+  - shape: `{"message": "...", "errors": {"<dotted.field>": ["..."]}}`;
+  - `message` is the first error, plus ` (and N more error)` or ` (and N more errors)` when there are more.
+- 401: `{"message": "Unauthenticated."}`. The SPA clears its token on any 401
+  outside `/api/auth/*`.
+- 404, 405, 413, 500: the body depends on `APP_DEBUG`. Phase 1 captures these
+  with `APP_DEBUG=false`. A 500 with debug off is `{"message": "Server Error"}`.
+- The SPA always sends `Accept: application/json`, so Laravel renders JSON
+  and never redirects.
+
+## 2. Models
+
+### 2.1 `App\Models\Chapter` → table `chapters`
+
+| Aspect | Value |
+|---|---|
+| Key | `id` string, not incrementing (the slug) |
+| Fillable | `id, number, section, title, title_em, payload, position` |
+| Casts | `payload: array` (JSON), `number: integer`, `position: integer` |
+| Timestamps | yes (`created_at`, `updated_at`, text `Y-m-d H:i:s`, UTC). **Never serialised** in responses. |
+| Hidden, appends, scopes, soft deletes, observers, relations | none |
+| Response shape (`shape()`, also used by export) | `{id, number, section, title, titleEm (from title_em), position, lesson: payload.lesson ?? null, items: payload.items ?? []}` |
+
+### 2.2 `App\Models\Upload` → table `uploads`
+
+| Aspect | Value |
+|---|---|
+| Key | ULID via `HasUlids`: lowercase, generated on `creating` |
+| Fillable | `path, original_name, mime, size`. **`id` is not fillable.** |
+| Casts | none. `created_at` serialises through Carbon as `YYYY-MM-DDTHH:MM:SS.000000Z`. |
+| Quirk | The controller builds the filename from `(string) Str::ulid()` (uppercase) and passes `id`, but `create()` drops it. So the row `id` is a **different** lowercase ULID than the one in `path`. Delete still works because it uses `basename(path)`. Phase 1 to confirm. |
+
+### 2.3 `App\Models\User` → table `users`
+
+- Fillable: `name, email, password`. Hidden: `password, remember_token`.
+- Casts: `email_verified_at: datetime`, `password: hashed`.
+- Traits: `HasApiTokens, HasFactory, Notifiable`. Notifiable is never used.
+- Only one row is ever made: `editor@local`, via `firstOrCreate` in login and in
+  `DatabaseSeeder`, with a bcrypt hash of random bytes or of a placeholder
+  string. **No code ever verifies `users.password`.**
+
+### 2.4 Sanctum `PersonalAccessToken` → table `personal_access_tokens`
+
+Source: `vendor/laravel/sanctum/src/{HasApiTokens,PersonalAccessToken,Guard}.php`,
+v4.3.2.
+
+- **Create:**
+  - plaintext = `token_prefix ('') + Str::random(40) + crc32b(those 40)`;
+  - the row stores `sha256(plaintext)` and `abilities = ["*"]` (JSON);
+  - `name = "admin-session"`, `tokenable_type = "App\Models\User"`, `expires_at = null`;
+  - the client receives `"<row id>|<plaintext>"`.
+- **Find:**
+  - without `|`: look up `where token = sha256(input)`;
+  - with `|`: split at the first `|`, `find(id)`, then `hash_equals(row.token, sha256(rest))`.
+- **Valid:** `sanctum.expiration` (null) is not exceeded, and `expires_at` is
+  null or in the future, and the tokenable exists. Then `last_used_at = now()`
+  is saved on every authenticated request.
+- Local state: 11 rows. They are dev tokens, but the brief says to keep existing tokens valid.
+
+### 2.5 Schema (SQLite DDL, `sqlite3 .schema`)
+
+Tables come from `backend/database/migrations/`:
+
+- `users`, `password_reset_tokens`, `sessions`;
+- `cache`, `cache_locks`;
+- `jobs`, `job_batches`, `failed_jobs`;
+- `personal_access_tokens`, `chapters`, `uploads`;
+- `migrations` (Laravel's own).
+
+App-relevant DDL:
+
+```sql
+CREATE TABLE "chapters" ("id" varchar not null, "number" integer not null, "section" varchar not null,
+  "title" varchar not null, "title_em" varchar, "payload" text not null, "position" integer not null default '0',
+  "created_at" datetime, "updated_at" datetime, primary key ("id"));
+CREATE INDEX "chapters_position_index" on "chapters" ("position");
+CREATE TABLE "uploads" ("id" varchar not null, "path" varchar not null, "original_name" varchar not null,
+  "mime" varchar not null, "size" integer not null, "created_at" datetime, "updated_at" datetime, primary key ("id"));
+CREATE UNIQUE INDEX "uploads_path_unique" on "uploads" ("path");
+CREATE TABLE "personal_access_tokens" ("id" integer primary key autoincrement not null, "tokenable_type" varchar not null,
+  "tokenable_id" integer not null, "name" text not null, "token" varchar not null, "abilities" text,
+  "last_used_at" datetime, "expires_at" datetime, "created_at" datetime, "updated_at" datetime);
+-- + unique(token), index(tokenable_type, tokenable_id), index(expires_at)
+CREATE TABLE "users" ("id" integer primary key autoincrement not null, "name" varchar not null, "email" varchar not null,
+  "email_verified_at" datetime, "password" varchar not null, "remember_token" varchar, "created_at" datetime, "updated_at" datetime);
+-- + unique(email)
+```
+
+Local row counts (read-only):
+
+| Table | Rows |
+|---|---|
+| chapters | 27 (damaged, see spec/SPEC.md §1) |
+| uploads | 0 |
+| personal_access_tokens | 11 |
+| users | 1 |
+| jobs, failed_jobs, sessions, cache | 0 |
+
+## 3. Middleware, auth, policies
+
+- **Global (Laravel 13 defaults):**
+  - `TrustProxies` (none configured), `HandleCors`, `PreventRequestsDuringMaintenance`;
+  - `ValidatePostSize` (413 above PHP `post_max_size`, 8M locally);
+  - `TrimStrings` (skips `current_password`, `password`, `password_confirmation`);
+  - `ConvertEmptyStringsToNull`.
+- **`TrimStrings` + `ConvertEmptyStringsToNull` = D-04.**
+  - Spaces in `before`/`after` are lost.
+  - An empty answer `""` becomes `null`, as in D-08's "no article" item.
+- **Guards:**
+  - `auth:sanctum` tries the `web` guard first. There is no session in the `api` group, so that always misses.
+  - Then it tries the bearer token.
+- **The docs disagree with the code.** The project `CLAUDE.md` says the SPA
+  uses a "cookie-based session against `backend/`". In fact
+  `src/admin/api.js` sends `Authorization: Bearer` with the token kept in
+  `localStorage`, and `backend/bootstrap/app.php` never enables
+  `statefulApi()`. The `CLAUDE.md` fix waits on plan Q1.
+- Policies, gates, Form Requests: **none**. Validation is inline in the controllers.
+- Rate limiters: **none**. Login has no throttle.
+- **CORS** (`config/cors.php`):
+  - paths `api/*` and `sanctum/csrf-cookie`;
+  - origins `http://localhost:5173`, `http://127.0.0.1:5173`, `http://localhost:4173`, plus the optional `FRONTEND_ORIGIN`;
+  - methods and headers `*`, no exposed headers, `max_age 0`, `supports_credentials false`.
+
+## 4. Sessions, cookies, CSRF, password flows
+
+`SESSION_DRIVER=database` is configured, but no API route starts a session.
+
+None of these exist:
+- remember-me;
+- password reset routes, although the `password_reset_tokens` table exists;
+- email verification.
+
+**Nothing to carry over except Sanctum tokens.**
+
+## 5. Queues, scheduler, events, mail, broadcasting
+
+| Concern | State |
+|---|---|
+| Queue | `QUEUE_CONNECTION=database`, 0 jobs, no `Job` classes |
+| Scheduler | none. `routes/console.php` has only the scaffold `inspire` command. |
+| Events / listeners / notifications | none |
+| Mail | `MAIL_MAILER=log`, no Mailables |
+| Broadcasting | `log`, unused |
+
+## 6. Files, cache, localisation, config
+
+- **Uploads:**
+  - Location: `realpath(backend/..)/public/uploads/<ULID>.<ext>`. That is the SPA's `public/` folder, which is committed and shipped with the static site.
+  - The extension comes from the sniffed MIME (`png`, `jpg`, `webp`, `gif`, `svg`), falling back to the client extension.
+  - A path guard checks `realpath` containment.
+  - Public URL: `rtrim(FRONTEND_BASE_URL, '/') . '/' . path`.
+  - Chapter HTML refers to `uploads/<file>`, and `src/RichText.jsx` prefixes `BASE_URL`.
+- **Size limit:**
+  - The rule says 5120 KB.
+  - The effective limit is PHP `upload_max_filesize`: **2M** on the local CLI. Above that, the request fails as a failed upload (422, Phase 1 to capture the message).
+- **Export:**
+  - Writes `realpath(backend/..)/src/chapters.json`.
+  - Encoding: `json_encode(PRETTY_PRINT | UNESCAPED_UNICODE | UNESCAPED_SLASHES) . "\n"`, which gives a 4-space indent.
+  - Write errors are suppressed (`@`) and reported only as `written: false`. The status stays 200.
+  - The response also returns the absolute `path`.
+- **Disks:** `local` (`storage/app/private`, served at F4/F5), `public`.
+  The app uses neither: uploads bypass the Storage facade.
+- **Cache:** configured as `database`, never used by the app.
+- **Localisation:** `APP_LOCALE=en`. Validation messages come from Laravel's
+  bundled English. There is no `lang/` folder.
+- **Timezone:** `UTC` (hard-coded in `config/app.php`).
+
+### `env()` keys the app depends on
+
+| Key | Used for | Rust equivalent |
+|---|---|---|
+| `EDITOR_PASSWORD` | Login comparison. Empty means every login fails. | same name |
+| `FRONTEND_BASE_URL` | Upload URLs (default `http://localhost:5173/learning-french`) | same name |
+| `FRONTEND_ORIGIN` | Extra CORS origin (optional) | same name |
+| `APP_KEY` | Not used by any API path: no encryption, cookies or sessions in play | not needed |
+| `APP_DEBUG` | Error body detail | replaced by `RUST_LOG` + a fixed prod-style body |
+| `DB_CONNECTION` / `DB_DATABASE` | SQLite file (default `database/database.sqlite`) | `DATABASE_URL` |
+| `SANCTUM_TOKEN_PREFIX` | Token prefix (default empty) | same name, default empty |
+| `APP_URL` | Sanctum stateful domains only, which are unused | not needed |
+
+The rest of `.env.example` (mail, Redis, AWS, logs) is scaffold and unused.
+
+## 7. Packages (`backend/composer.json`)
+
+| Package | Purpose here | Rust equivalent |
+|---|---|---|
+| `laravel/framework` 13.35.0 | Everything | axum, tower-http, sqlx, serde_json |
+| `laravel/sanctum` 4.3.2 | Bearer tokens | own module: `sha2`, `crc32fast`, `rand`, `subtle`/constant-time eq |
+| `laravel/tinker` | REPL (dev) | none needed |
+| dev: `pail`, `pao`, `pint`, `collision`, `mockery`, `faker`, `phpunit` | Dev tooling | `cargo fmt`, `clippy`, `cargo test` |
+
+There are no third-party integrations: no HTTP clients, payments, storage or
+mail providers.
+
+## 8. Vite setup
+
+- **SPA (root):**
+  - `vite.config.js`: `@vitejs/plugin-react`, `base: "/learning-french/"`.
+  - Single entry `index.html` → `src/main.jsx`. The admin is lazy-loaded when the hash starts with `#/admin`.
+  - Env vars:
+    - `VITE_API_URL`, admin only, default `http://localhost:8000`;
+    - `BASE_URL`, built in, used by `RichText.jsx`.
+  - Built by `npm run build` → `dist/`, deployed by `.github/workflows/` to GitHub Pages.
+  - Dev: `npm run dev` on `:5173`. Prod: static files, no server. **Laravel never serves the SPA.**
+- **Backend's own Vite:**
+  - `backend/vite.config.js` with `laravel-vite-plugin`, Tailwind 4 and Vite ^8.
+  - Inputs `resources/css/app.css` and `resources/js/app.js`, used only by `welcome.blade.php` (F1).
+  - No manifest is built. This has no SPA role.
+
+## 9. Tests
+
+- `backend/tests/Feature/ExampleTest.php` (`GET /` → 200) and
+  `tests/Unit/ExampleTest.php` (`assertTrue(true)`).
+- `phpunit.xml`: SQLite `:memory:`, array cache and session, sync queue.
+- Result on 2026-11-19 (`composer test`):
+  `{"tool":"phpunit","result":"passed","tests":2,"passed":2,"assertions":2,"duration_ms":89}`.
+- **No API route has a test.** Phase 1 builds the whole oracle.
+- SPA: no test runner. `spec/tools/check.mjs` checks content (Node, no deps).
+
+## 10. Behaviours that look like bugs (candidates for `KNOWN_ISSUES.md`)
+
+| # | Behaviour | Source |
+|---|---|---|
+| K1 | Validation drops every exercise field except `type`, `rule` and `consolidation` | D-03, §1.3 |
+| K2 | `TrimStrings` and `ConvertEmptyStringsToNull` change content | D-04, §3 |
+| K3 | The upload row `id` differs from the ULID in the filename | §2.2 |
+| K4 | SVG uploads are accepted and served from the public site origin (stored-XSS vector) | §1.1 R10 |
+| K5 | Login has no rate limit, and every login makes a never-expiring token that is never cleaned up | §2.4, §3 |
+| K6 | The export response leaks the absolute filesystem path. A failed write still returns 200. | §6 |
+| K7 | The effective upload cap (2M) is below the validation rule (5120 KB) | §6 |
+| K8 | `reorder` silently ignores unknown ids, and doesn't require the full set (gaps or duplicate positions are possible) | §1.1 R8 |
+| K9 | `number` is not unique (D-10). The placeholder chapter collides with number 7. | spec/SPEC.md §4 |
+| K10 | `payload` stores the client's raw `number` (a string `"3"` stays a string) while the column is cast to int | §1.3 |

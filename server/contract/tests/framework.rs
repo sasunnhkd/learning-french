@@ -21,11 +21,11 @@ fn unknown_api_route_is_404_json() {
     );
 }
 
+/// Routing runs before the auth guard, so a guest gets the 405 too.
 #[test]
 fn wrong_method_is_405_with_allow_header() {
     let c = Ctx::from_env();
-    let t = c.login();
-    let r = c.post("/api/chapters/some-id").bearer(&t).send();
+    let r = c.post("/api/chapters/some-id").send();
     let body = r.expect(405);
     assert_eq!(
         body,

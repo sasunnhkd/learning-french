@@ -262,14 +262,18 @@ fn types_are_sniffed_from_content() {
 /// Bodies above 8 MB (PHP post_max_size) are rejected with 413.
 #[test]
 fn oversized_body_is_413() {
+    // Rejected before routing and auth (Laravel ValidatePostSize / PHP),
+    // so no token. Over a real socket: the server answers without reading
+    // the 9 MB body, and the client must still receive that response.
     let c = Ctx::from_env();
-    let t = c.login();
-    let r = upload(
-        &c,
-        &t,
-        "huge.bin",
-        "application/octet-stream",
-        &vec![0u8; 9_000_000],
-    );
+    let r = c
+        .post("/api/uploads")
+        .multipart(
+            "file",
+            Some("huge.bin"),
+            "application/octet-stream",
+            &vec![0u8; 9_000_000],
+        )
+        .send();
     assert_eq!(r.status, 413);
 }

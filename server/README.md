@@ -6,35 +6,78 @@ This folder is a Cargo workspace for the 1:1 Rust port of `backend/`
 
 | Path | What it is |
 |---|---|
+| `app/` | `grammaire-server`, the Axum server. Phase 2 has the foundation: all routes behind a guard that fails closed. Slices 3.x port the handlers. |
+| `app/migrations/` | Laravel's exact DDL as a sqlx baseline, for fresh and test databases **only**. The server never migrates the real file. |
 | `contract/` | Black-box HTTP parity suite. It runs unchanged against Laravel and Rust, with a `TARGET` switch for the differences listed in `docs/migration/KNOWN_ISSUES.md`. |
-| `contract/run-laravel.sh` | Builds a temp sandbox (copy of `backend/`, `src/chapters.json`, an empty `public/uploads/`, a fresh SQLite seeded from `src/chapters.json`), serves it on `127.0.0.1:8791` with a 600 s hard deadline, then runs the suite. It never touches the real `src/` or `public/`. |
+| `contract/run.sh` | Builds a temp sandbox (copy of `backend/`, `src/chapters.json`, an empty `public/uploads/`, a fresh SQLite made by Laravel's `migrate --seed`), starts one server on `127.0.0.1:8791` with a 600 s hard deadline, then runs the suite. It never touches the real `src/` or `public/`. |
+| `contract/run-laravel.sh`, `run-rust.sh` | `run.sh laravel` and `run.sh rust` |
+| `contract/ported.txt` | Contract tests the Rust app must pass so far |
 | `scripts/osv-audit.py` | OSV advisory check of `Cargo.lock`, plus the banned-crate list. Run it after every lockfile change. |
-| `app/` | The Axum server (Phase 2, not written yet). |
 
-## Run the contract suite against Laravel
+You need Rust (`. "$HOME/.cargo/env"`). The contract runs also need PHP,
+`backend/vendor` (`composer install` in `backend/`), `sqlite3`, `rsync` and
+`curl`.
 
-You need `backend/vendor` (`composer install` in `backend/`), PHP, `sqlite3`,
-`rsync`, `curl`, and Rust (`. "$HOME/.cargo/env"`).
+## Run the server
+
+```bash
+cd server
+DATABASE_URL=sqlite:/path/to/laravel.sqlite EDITOR_PASSWORD=change-me cargo run -p grammaire-server
+```
+
+Point `DATABASE_URL` at a database made by Laravel's migrations. Don't use
+`backend/database/database.sqlite`: spec/SPEC.md §1 marks it damaged, and
+editing through the backoffice is on hold until the port is done.
+
+All settings, their defaults and their Laravel equivalents are in the
+header of `app/src/config.rs`. A `.env` in the working directory is read if
+it exists. The server refuses to start if `DATABASE_URL` is missing, if the
+file doesn't exist, or if the Laravel tables are missing. It never creates
+or migrates the database. Ctrl-C, SIGTERM or `IDLE_TIMEOUT_SECS` shut it
+down gracefully.
+
+## Tests
+
+```bash
+cd server && cargo test --workspace --lib --bins --test router --test schema_baseline
+```
+
+This runs the app's unit and in-process tests (no server needed).
+
+Contract suite, whole, against Laravel:
 
 ```bash
 server/contract/run-laravel.sh
 ```
 
-Extra arguments go to the test harness, for example a test name filter:
+Contract suite against Rust, limited to the tests in `ported.txt`:
 
 ```bash
-server/contract/run-laravel.sh upload
+server/contract/run-rust.sh
 ```
 
-Run any command against the sandbox instead (it gets `BASE_URL`,
-`EDITOR_PASSWORD`, `TARGET`, `SANDBOX_ROOT` and `CONTRACT_DB`):
+Contract suite, whole, against Rust (shows what is left to port):
 
 ```bash
-server/contract/run-laravel.sh -- env
+server/contract/run-rust.sh --all
 ```
 
-Set `KEEP_SANDBOX=1` to keep the temp dir, and `CONTRACT_PORT` or
-`CONTRACT_DEADLINE` to change the port or the deadline.
+Other arguments go to the test harness as a name filter. `-- CMD` runs any
+command against the sandbox instead; it gets `BASE_URL`, `EDITOR_PASSWORD`,
+`TARGET`, `SANDBOX_ROOT` and `CONTRACT_DB`. Set `KEEP_SANDBOX=1` to keep the
+temp dir, and `CONTRACT_PORT` or `CONTRACT_DEADLINE` to change the port or
+the deadline.
+
+### Regenerate the schema fixture
+
+Do this only after a change under `backend/database/migrations/`:
+
+```bash
+server/contract/run.sh laravel -- sh -c 'sqlite3 "$CONTRACT_DB" "select type||char(9)||name||char(9)||tbl_name||char(9)||ifnull(sql,\"\") from sqlite_master where name not in (\"migrations\",\"sqlite_sequence\",\"_sqlx_migrations\") and tbl_name not in (\"migrations\") order by rowid"' > server/app/tests/fixtures/laravel-schema.tsv
+```
+
+Then update `app/migrations/` to match. Schema changes also need a `.sql`
+file for the user to apply and their approval (brief, rule 2).
 
 ## Writing contract tests
 
@@ -50,9 +93,14 @@ Set `KEEP_SANDBOX=1` to keep the temp dir, and `CONTRACT_PORT` or
   `round_trip_of_every_seed_chapter` does.
 - Use `c.sqlite()` only for states the API cannot create, such as expired
   tokens or a deleted user.
+- When a slice lands, add its test names to `contract/ported.txt`.
 
 ## Dependencies
 
-The suite's only crate is `serde_json`, pinned in `Cargo.lock`. Its HTTP
-client is std-only, in `contract/src/lib.rs`. Vet every new crate under the
-global package-safety rule, then run `scripts/osv-audit.py`.
+Every crate is vetted before it's added (MIGRATION_PLAN.md, "Crates"), and
+exact versions are pinned in `Cargo.toml` and `Cargo.lock`. After any
+lockfile change, run:
+
+```bash
+python3 -I server/scripts/osv-audit.py server/Cargo.lock
+```

@@ -1,8 +1,8 @@
 # Migration plan: Laravel API → Rust (Axum)
 
-Status: **Phase 1 done (2026-11-20).** The contract suite is green against
-Laravel: 57 tests, plus 4 helper unit tests. Next is Phase 2, the Rust
-foundation. Q6–Q10, Q15 and Q16 were approved on 2026-11-20. Q3, Q4, Q5 and Q11 still
+Status: **Phase 2 done (2026-11-20).** The Rust foundation is up: 9 of
+the 57 contract tests pass against Rust (`server/contract/ported.txt`), and
+Laravel is still 57/57. Next is slice 3.1, auth. Q6–Q10, Q15 and Q16 were approved on 2026-11-20. Q3, Q4, Q5 and Q11 still
 run on their defaults (local tool, SQLite, keep tokens valid, systemd + tarball).
 
 **Decided 2026-11-19 (Q1): option A.** Port today's 12-route local backoffice
@@ -114,44 +114,87 @@ SPA (Vite, :5173, unchanged) ──fetch, Bearer──▶ grammaire-server (Axum
 
 ### Folder layout
 
+As built through Phase 2. `(3.x)` marks modules that later slices add.
+
 ```
 server/
-  Cargo.toml            # package grammaire-server, version 0.1.0
-  Cargo.lock  deny.toml  .sqlx/   # offline query data for CI
-  migrations/           # baseline = Laravel DDL for app tables (test/fresh DBs only)
-  src/
-    main.rs             # config, tracing, pool, router, graceful shutdown
-    config.rs           # typed env: DATABASE_URL, EDITOR_PASSWORD, FRONTEND_BASE_URL,
-                        #   FRONTEND_ORIGIN, SANCTUM_TOKEN_PREFIX, REPO_ROOT, BIND_ADDR
-    error.rs            # AppError → Laravel-shaped JSON (401/404/405/413/422/500)
-    validation/         # rule engine + Laravel English messages, dotted paths, "(and N more errors)"
-    auth/               # sanctum.rs (format, hash, lookup, last_used_at), extractor, login/logout
-    chapters/           # model, repo (SQLx), handlers, payload rules
-    uploads/            # handlers, MIME sniffing (incl. SVG), path guard
-    export.rs           # PHP-compatible pretty JSON writer (4 spaces, unescaped, trailing \n)
-  tests/                # Rust unit/integration tests (token vectors, JSON writer, validation messages)
-  scripts/osv-audit.py  # OSV advisory check of Cargo.lock + banned-crate list (until cargo-audit/deny are installed)
-  contract/             # workspace member: HTTP parity suite (std-only client + serde_json), BASE_URL-driven (Q12)
-    src/lib.rs          # Ctx (env), Req/Resp HTTP client, validation_body, php_pretty, crc32b, TINY_PNG
-    tests/*.rs          # one file per route group
-    run-laravel.sh      # sandbox copy + temp SQLite + seed + artisan serve on 127.0.0.1, killed at a 600 s hard deadline
-    run-rust.sh         # same sandbox, Rust binary (Phase 2)
+  Cargo.toml  Cargo.lock      # workspace (app, contract); rust-version 1.94
+  .gitignore                  # /target/
+  README.md                   # how to run, how to write contract tests
+  scripts/osv-audit.py        # OSV advisory check of Cargo.lock + banned-crate list
+  app/                        # package grammaire-server 0.1.0
+    migrations/0001_laravel_baseline.sql  # Laravel's exact DDL; fresh/test DBs only
+    src/
+      main.rs                 # .env, config, tracing, pool, schema check, serve, graceful shutdown
+      lib.rs                  # module list; re-exports AppState, router
+      config.rs               # typed env (table in the file header); Secret hides EDITOR_PASSWORD
+      error.rs                # AppError -> Laravel JSON bodies (401/404/405/413/500), laravel_path()
+      http.rs                 # routes + middleware stack (order documented in the file header)
+      cors.rs                 # Laravel HandleCors + php-cors, hand-written
+      auth.rs                 # bearer_token() (Laravel parsing), AuthUser guard (fails closed until 3.1)
+      db.rs                   # pool on the existing file, verify_schema, MIGRATOR, fresh_for_tests
+      idle.rs                 # IDLE_TIMEOUT_SECS activity tracking
+      validation/             # (3.3) rule engine + Laravel messages
+      chapters/ uploads/ export.rs  # (3.2-3.5)
+    tests/
+      router.rs               # in-process routing, error, CORS, 413, request-id checks
+      schema_baseline.rs      # baseline == fixtures/laravel-schema.tsv
+      fixtures/laravel-schema.tsv  # sqlite_master after Laravel's migrate (regen: server/README.md)
+      common/mod.rs           # temp DBs, test config, app()
+  contract/                   # HTTP parity suite (std-only client + serde_json), BASE_URL-driven (Q12)
+    src/lib.rs                # Ctx (env), Req/Resp HTTP client, validation_body, php_pretty, crc32b, TINY_PNG
+    tests/*.rs                # one file per route group, plus validation.rs
+    fixtures/                 # tiny.jpg / tiny.gif / tiny.webp
+    run.sh                    # sandbox + Laravel-made DB + server (laravel|rust) + suite
+    run-laravel.sh run-rust.sh  # wrappers for run.sh
+    ported.txt                # contract tests the Rust app must pass so far
 ```
 
-### Crates (each vetted before adding, versions pinned in `Cargo.lock`)
+### Crates
+
+Each crate is vetted before it is added, and `Cargo.lock` pins every version.
+
+**`grammaire-server`, vetted 2026-11-20** (versions are exact pins):
 
 | Crate | Use |
 |---|---|
-| `tokio`, `axum` (with `multipart`), `tower`, `tower-http` (cors, trace, timeout, request-id, limit) | Server |
-| `sqlx` (`sqlite`, `runtime-tokio`, `macros`) | DB, compile-time checked |
-| `serde`, `serde_json` (`preserve_order`) | JSON with PHP key order |
-| `sha2`, `crc32fast`, `rand`, `subtle`, `hex` | Sanctum tokens, constant-time compare |
-| `ulid`, `time` (or `chrono`) | Upload ids, timestamp text |
-| `regex` | `id` rule `^[a-z0-9-]+$` |
-| `infer` + an own SVG check | MIME sniffing. `infer` doesn't detect SVG, and PHP's `finfo` does. |
-| `dotenvy`, `thiserror`, `anyhow` (main only), `tracing`, `tracing-subscriber` | Config, errors, logs |
-| `tower_governor` (only if Q9 = yes) | Login rate limit |
-| Not needed under A | `bcrypt`/`argon2` (no password is verified), sessions, `lettre`, `apalis`, templates |
+| `tokio` 1.54.1 | Runtime, signals, timers |
+| `axum` 0.8.9 | Router. Default features off: `http1`, `json`, `form`, `query`, `tokio`, `matched-path`, `original-uri` and `tracing` on. |
+| `tower` 0.5.3 (`util`) | Service composition |
+| `tower-http` 0.7.1 | `trace`, `request-id` and `timeout` features. **No `cors`**: CORS is hand-written in `cors.rs`, because Laravel's 204 preflights and `Vary` rules differ from tower-http's. |
+| `sqlx` 0.9.1 | SQLite with the bundled library, `runtime-tokio`, `macros` and `migrate`. Default features off: no `load-extension`, no `any`, no `json`. |
+| `serde` 1.0.229, `serde_json` 1.0.154 (`preserve_order`) | JSON with PHP key order |
+| `thiserror` 2.0.21, `anyhow` 1.0.104 | Errors (`anyhow` only at the edges) |
+| `tracing` 0.1.44, `tracing-subscriber` 0.3.23 | Logs (`fmt`, `env-filter`, `json`) |
+| `dotenvy` 0.15.7 | Optional `.env` |
+
+The vetting covered the whole tree:
+
+- The lock has 187 crates, of which 147 are built.
+- Owners were checked through the crates.io API. All are known ecosystem
+  publishers: rust-lang, dtolnay, tokio-rs, hyperium, rustcrypto, servo,
+  unicode-org/icu4x, the sqlx maintainers, smol-rs, and others.
+- Build scripts:
+  - Most only probe `rustc --version` or write to `OUT_DIR`.
+  - `libsqlite3-sys` compiles the bundled SQLite with `cc`. Its bindgen path
+    belongs to a feature that is not enabled.
+- Proc macros: `sqlx-macros-core` runs `cargo metadata --no-deps` to find
+  the workspace root. Nothing touches the network.
+- `scripts/osv-audit.py` finds no advisories and no banned crates.
+
+**Planned for later slices** (each vetted when added):
+
+| Crate | Use |
+|---|---|
+| `sha2`, `rand`, `subtle`, `hex` | Sanctum tokens (3.1) |
+| `ulid`, `time` | Upload ids, timestamp text (3.4) |
+| `regex` | The `id` rule `^[a-z0-9-]+$`, or a hand-written check (3.3) |
+| `infer` plus an own SVG check | MIME sniffing (3.4) |
+| `tower_governor` or a small in-process limiter | Login rate limit (Q9) |
+| `sqlx-cli` | `cargo sqlx prepare` once queries use `query!` (3.1) |
+
+Not needed under A: `bcrypt`/`argon2` (no password is verified), sessions,
+`lettre`, `apalis`, templates.
 
 ## 2. Phases and commits
 
@@ -167,8 +210,8 @@ Each phase ends with:
 |---|---|---|---|
 | 0 | INSTRUCTION, INVENTORY, this plan | Q1, Q2, Q2a, Q12, Q13 and Q14 are decided (2026-11-19). The other questions run on the defaults stated here until you override them. | same |
 | 1 | Toolchain install (Q14, each tool and crate vetted). A `server/` Cargo workspace holding only the `contract` crate. The suite runs against sandboxed Laravel. It covers every R1–R12 route: guest, bad or deleted token, happy path, each validation rule with its message, 404, 405, 413, CORS preflight. Fixtures come from `src/chapters.json` (26 chapters plus the placeholder). Deliverable: `KNOWN_ISSUES.md` (K1–K13). | **Done 2026-11-20:** 57/57 green against Laravel in about 20 s. With `TARGET=rust`, exactly the 11 tagged tests fail (KNOWN_ISSUES). | Acceptance tests from SPEC §6 instead |
-| 2 | `server/app` crate skeleton, config, tracing, `/up`, error type, CORS (exact origin list), SQLite pool, sqlx baseline proved by a `.schema` diff, `cargo sqlx prepare`. | `cargo fmt/clippy/test` green. `/up` and 401-for-guest contract tests pass against Rust. | MariaDB pool, new schema as `.sql` |
-| 3.1 | Auth slice: Sanctum token module (vectors from real Laravel-made tokens), guard extractor, `last_used_at`, login and logout | R1, R2 and every guest/bad-token case green | Cookie auth, CSRF, register, verify, reset |
+| 2 | `server/app` crate skeleton, config, tracing, request ids, `/up`, error type, CORS (exact origin list), post-size limit, timeout, idle exit, SQLite pool on the existing file, sqlx baseline proved against Laravel's `sqlite_master`. All 12 routes are registered behind a guard that fails closed. `run.sh` with a `rust` target and `ported.txt`. | **Done 2026-11-20:** 20 app tests (10 unit, 9 router, 1 schema baseline) plus the 4 contract helper tests. 9 contract tests pass against Rust, including the 9 MB 413 over a real socket (5/5 repeats). Laravel is still 57/57, and the `TARGET=rust` negative run still fails exactly the 11 tagged tests. `cargo sqlx prepare` moves to 3.1, the first `query!` macro: Phase 2 has only two runtime queries, both with bound parameters. | MariaDB pool, new schema as `.sql` |
+| 3.1 | Auth slice: Sanctum token module (vectors from real Laravel-made tokens), guard extractor, `last_used_at`, login and logout. **Notes from the Phase 2 review:** <ul><li>Read request input with one extractor that turns a JSON **or** form body into a `serde_json::Value`, and treats a body that won't parse as `{}`. axum's `Json`/`Form` rejections are plain-text 400/415/422 errors, and they would break `login_malformed_json` and `login_accepts_form_encoding`.</li><li>Before writing that extractor, capture whether Laravel merges query-string input: does `POST /api/auth/login?password=…` with an empty body log in? If it does, that is a new keep-or-fix item (K14) for you. The recommendation would be to fix it, because passwords would land in access logs.</li><li>Add captured contract tests for GET, PUT and DELETE on `/api/chapters/reorder`. They should get 404 `… [App\\Models\\Chapter] reorder`, which pins the `{id}` delegation in `http.rs`.</li></ul> | R1, R2 and every guest/bad-token case green | Cookie auth, CSRF, register, verify, reset |
 | 3.2 | Chapters read: R3, R4 (ordering, shape, null `lesson`, `items` default `[]`) | green | Public read endpoints + ETag |
 | 3.3 | Chapters write: R5–R8, the validation engine, `position` logic, transaction for reorder, Q2 outcome | green, plus a round-trip test: the 26 chapters saved and read back are byte-equal (Q2 = fix) | Drafts, versions, publish |
 | 3.4 | Uploads: R9–R11, sniffing, path guard, Q7/Q8/Q15 outcomes | green | same |
@@ -215,6 +258,6 @@ Strangler or route-by-route routing isn't worth it for 12 routes and one user.
 | R10 `POST /api/uploads` | `uploads::store` | `server/contract/tests/uploads.rs` | Laravel ✓, Rust pending |
 | R11 `DELETE /api/uploads/{id}` | `uploads::destroy` | `server/contract/tests/uploads.rs` | Laravel ✓, Rust pending |
 | R12 `POST /api/export` | `export::run` | `server/contract/tests/export.rs` | Laravel ✓, Rust pending |
-| F2 `GET /up` | `health` | `server/contract/tests/framework.rs` | Laravel ✓, Rust pending |
-| F1, F3, F4, F5 | dropped (Q6) | `server/contract/tests/framework.rs` asserts 404 | Laravel ✓, Rust pending (Q6 approved) |
+| F2 `GET /up` | `http::up` | `server/contract/tests/framework.rs` | Laravel ✓, Rust ✓ |
+| F1, F3, F4, F5 | dropped (Q6) | `server/contract/tests/framework.rs` asserts 404 | Laravel ✓, Rust ✓ (404, Q6) |
 | Jobs, commands, listeners | none exist (`inspire` only, scaffold) | — | N/A |

@@ -1,0 +1,14 @@
+# Contract tests the Rust app must pass so far. run-rust.sh runs exactly
+# these (libtest --exact). Add a slice's tests here when the slice lands;
+# when the list covers the whole suite, run-rust.sh --all is the gate.
+#
+# Phase 2: foundation (routing, errors, CORS, guard fails closed)
+up_returns_200
+unknown_api_route_is_404_json
+cors_preflight_allowed_origins_echo_request
+cors_preflight_unknown_origin_gets_no_allow_origin
+scaffold_routes
+guest_without_accept_header
+protected_routes_reject_guests
+wrong_method_is_405_with_allow_header
+oversized_body_is_413

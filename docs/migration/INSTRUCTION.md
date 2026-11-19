@@ -86,7 +86,7 @@ approves a change. Read the code. Don't guess.
   and `ConvertEmptyStringsToNull` (turns `""` answers into `null`). The suite records
   them as `KNOWN_ISSUES` cases with both expected values. **Q2 was decided on
   2026-11-19: fix both.** Rust keeps every exercise field and stops
-  trimming and nulling exercise content. Top-level fields follow plan Q2a.
+  trimming and nulling strings anywhere in the request (plan Q2a).
 - Rust writes must stay readable by Laravel (rollback):
   - timestamps as `YYYY-MM-DD HH:MM:SS` UTC text;
   - `payload` as JSON text;
@@ -114,8 +114,8 @@ Each one gets a contract test and a line in INVENTORY or KNOWN_ISSUES.
   Field names in messages use the dotted path (`lesson.formation`).
 - **Global request middleware.** `TrimStrings` (skips `password`,
   `password_confirmation` and `current_password`) and `ConvertEmptyStringsToNull`. **Rust drops them for exercise content
-  (Q2 = fix).** Whether top-level fields keep them is plan Q2a; the default
-  keeps them.
+  (Q2 = fix).** Plan Q2a (2026-11-19) extends this **everywhere**,
+  top-level fields included.
 - **The `required` rule fails a whitespace-only string even without
   `TrimStrings`.** Laravel checks `trim($value) === ''`, and the Rust
   validator must do the same.

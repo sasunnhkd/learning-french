@@ -1,7 +1,7 @@
 # Migration plan: Laravel API → Rust (Axum)
 
-Status: **Phase 0 draft. Q1, Q2, Q12 and Q13 are decided; Phase 1 waits on
-Q14 (toolchain install).** No Rust code has been written and nothing has been installed.
+Status: **Phase 0 committed. Q1, Q2, Q2a, Q12, Q13 and Q14 are decided.
+Phase 1 starts with the toolchain install.** No Rust code has been written yet.
 
 **Decided 2026-11-19 (Q1): option A.** Port today's 12-route local backoffice
 API 1:1 to Rust. The "Under B" notes below are kept only as reference for a
@@ -55,7 +55,7 @@ changes under B.
 | # | Question | Recommendation | Blocks |
 |---|---|---|---|
 | Q2 | D-03 (validation strips exercise fields) and D-04 (`TrimStrings`, `ConvertEmptyStringsToNull`): reproduce them for parity, or fix them as approved differences? | **Decided 2026-11-19: fix both.** Rust keeps every exercise field (D-03), and stops trimming and nulling exercise content (D-04). The scope of the D-04 fix is Q2a. The suite asserts Laravel's lossy value on the Laravel run and the exact value on the Rust run, and tags each case as an approved difference in `KNOWN_ISSUES.md`. | Phase 1 assertions, slice 3 |
-| Q2a | Where does the D-04 fix apply? Inside `lesson` and `items` only, or also on the top-level fields? Fixing the top-level fields too changes two things: `titleEm: ""` would come back as `""` instead of `null` in index, show and export, and `title` and `section` would keep padding spaces. | **Default: `lesson` and `items` only.** Top-level fields keep Laravel's trim and empty-to-null behaviour. | Chapters-write contract cases |
+| Q2a | Where does the D-04 fix apply? Inside `lesson` and `items` only, or also on the top-level fields? Fixing the top-level fields too changes two things: `titleEm: ""` would come back as `""` instead of `null` in index, show and export, and `title` and `section` would keep padding spaces. | **Decided 2026-11-19: everywhere.** Rust never trims a string and never turns one into `null`. The changes to top-level output (`titleEm: ""` stays `""`, `title` and `section` keep their padding) are approved differences in `KNOWN_ISSUES.md`. The `required` rule still fails whitespace-only strings, as Laravel's does. | Chapters-write contract cases |
 | Q3 | Where does the Rust server run: on this Mac as a local tool, like `php artisan serve` today, or on the Debian 12 server? | A: local. B: Debian. | Phase 6, build target |
 | Q4 | Which DB engine: SQLite (today) or MariaDB (SPEC §6, global "prod = MariaDB")? | A: SQLite. B: MariaDB. | Phase 2 |
 | Q5 | Keep the 11 existing Sanctum tokens valid, or force re-login at cutover? | **Keep.** It costs one sha256 comparison, and rollback to Laravel then works both ways. | Slice 1 |
@@ -67,7 +67,8 @@ changes under B.
 | Q11 | Packaging: systemd + versioned tarball (global rules, SPEC §6), or Docker? | systemd + tarball. Docker only if you want it. | Phase 6 |
 | Q12 | Contract suite language: Node `node:test` (Node 22 is already installed, no new deps), Rust integration tests, or Hurl (a new tool to vet)? | **Decided 2026-11-19: Rust integration tests.** The suite is the `server/contract` crate. It uses `reqwest` and reads `BASE_URL`. It is one suite for both apps, with a `TARGET=laravel|rust` switch. The switch changes only the cases tagged as approved differences in `KNOWN_ISSUES.md` (Q2). As a result, the toolchain install (Q14) moves to the start of Phase 1. | Phase 1 |
 | Q13 | The repo is public, and `backend/`, `spec/`, the SPA changes and `CLAUDE.md` are all uncommitted. What goes into commits on `migration/rust`? | **Decided 2026-11-19: migration files only.** Phase commits contain only `docs/migration/` and `server/` (which holds the contract crate), after a secret scan of the staged diff. `backend/`, `spec/`, `CLAUDE.md` and the SPA changes stay uncommitted. Nothing is pushed without your OK. | Phase 0 commit |
-| Q14 | Install the Rust toolchain (rustup) plus `cargo-audit`, `cargo-deny`, `sqlx-cli`, and later `oha`? Each one gets vetted under the package-safety rule first. | Yes, at the **start of Phase 1** (because Q12 chose Rust tests). The Phase 1 crates are `tokio`, `reqwest`, `serde_json` and `tempfile`. `reqwest` would use `default-features = false`, with only the `json` and `multipart` features, if vetting confirms that. The suite only calls `http://127.0.0.1`, so no TLS backend is needed. The route for installing rustup is still to be confirmed. | Phase 1 |
+| Q14 | Install the Rust toolchain (rustup) plus `cargo-audit`, `cargo-deny`, `sqlx-cli`, and later `oha`? Each one gets vetted under the package-safety rule first. | Yes, at the **start of Phase 1** (because Q12 chose Rust tests). The Phase 1 crates are `tokio`, `reqwest`, `serde_json` and `tempfile`. `reqwest` would use `default-features = false`, with only the `json` and `multipart` features, if vetting confirms that. The suite only calls `http://127.0.0.1`, so no TLS backend is needed. **Route decided 2026-11-19:** download `sh.rustup.rs` to the scratchpad,
+read it, then run it with `--no-modify-path` so no shell profile is edited. | Phase 1 |
 | Q15 | Upload size: keep Laravel's effective 2M cap (from PHP `upload_max_filesize`), or honour the 5120 KB rule? | 5120 KB. That is what the rule says. | Slice 4 |
 
 ## 1. Architecture (option A)
@@ -141,7 +142,7 @@ Each phase ends with:
 
 | Phase | Work | Done when | Under B |
 |---|---|---|---|
-| 0 | INSTRUCTION, INVENTORY, this plan | Q1, Q2, Q12 and Q13 are decided (2026-11-19). The other questions run on the defaults stated here until you override them. | same |
+| 0 | INSTRUCTION, INVENTORY, this plan | Q1, Q2, Q2a, Q12, Q13 and Q14 are decided (2026-11-19). The other questions run on the defaults stated here until you override them. | same |
 | 1 | Toolchain install (Q14, each tool and crate vetted). A `server/` Cargo workspace holding only the `contract` crate. The suite runs against sandboxed Laravel. It covers every R1–R12 route: guest, bad or deleted token, happy path, each validation rule with its message, 404, 405, 413, CORS preflight. Fixtures come from `src/chapters.json` (26 chapters plus the placeholder). Deliverable: `KNOWN_ISSUES.md` (K1–K10 confirmed or dropped). | Suite green against Laravel. Each Q2-type difference is tagged. | Acceptance tests from SPEC §6 instead |
 | 2 | `server/app` crate skeleton, config, tracing, `/up`, error type, CORS (exact origin list), SQLite pool, sqlx baseline proved by a `.schema` diff, `cargo sqlx prepare`. | `cargo fmt/clippy/test` green. `/up` and 401-for-guest contract tests pass against Rust. | MariaDB pool, new schema as `.sql` |
 | 3.1 | Auth slice: Sanctum token module (vectors from real Laravel-made tokens), guard extractor, `last_used_at`, login and logout | R1, R2 and every guest/bad-token case green | Cookie auth, CSRF, register, verify, reset |

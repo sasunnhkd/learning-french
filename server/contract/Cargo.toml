@@ -1,0 +1,12 @@
+[package]
+name = "contract"
+version = "0.1.0"
+description = "HTTP parity suite: runs unchanged against the Laravel API and the Rust port"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Only dependency. HTTP is hand-rolled on std::net (the suite only calls 127.0.0.1),
+# so no tokio/hyper/reqwest tree to vet. preserve_order keeps PHP key order.
+serde_json = { version = "=1.0.154", features = ["preserve_order"] }

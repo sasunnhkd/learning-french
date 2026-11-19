@@ -2,8 +2,10 @@
 
 Read on 2026-11-19 from the working tree on branch `migration/rust`. That is
 the uncommitted state of `main`, and `backend/` is untracked. Sources are cited
-as repo paths. "Phase 1 to capture" marks an exact string or behaviour that
-must be recorded from the running app, not guessed.
+as repo paths. Exact strings were captured from the running app in Phase 1
+(2026-11-20, sandbox, `APP_DEBUG=false`). The contract tests in
+`server/contract/tests/` assert them, and `KNOWN_ISSUES.md` (K1–K13) lists the
+behaviours that look like bugs.
 
 ## 1. Routes
 
@@ -20,7 +22,7 @@ The `api` group holds only `SubstituteBindings`. There is no throttle and no
 | R1 | POST | `/api/auth/login` | `AuthController@login` | none | `password: required\|string` | 200 `{"token": "<id>\|<48 chars>"}` | 422 `errors.password = ["Invalid password."]` when `EDITOR_PASSWORD` is empty or differs. Compared with `hash_equals`. |
 | R2 | POST | `/api/auth/logout` | `AuthController@logout` | sanctum | none | 200 `{"ok": true}`. Deletes the current token only. | 401 |
 | R3 | GET | `/api/chapters` | `ChapterController@index` | sanctum | none | 200 `[{id, number, section, title, titleEm, position}]`, ordered by `position`, then `number` | 401 |
-| R4 | GET | `/api/chapters/{id}` | `ChapterController@show` | sanctum | none | 200 chapter shape (§2.1) | 401, 404 (`findOrFail`, Phase 1 to capture the body) |
+| R4 | GET | `/api/chapters/{id}` | `ChapterController@show` | sanctum | none | 200 chapter shape (§2.1) | 401, 404 `{"message": "No query results for model [App\\Models\\Chapter] <id>"}` |
 | R5 | POST | `/api/chapters` | `ChapterController@store` | sanctum | §1.3, with `id` unique | **201** chapter shape | 401, 422 |
 | R6 | PUT | `/api/chapters/{id}` | `ChapterController@update` | sanctum | §1.3 + an `id` equal to the route id | 200 chapter shape (after `refresh()`) | 401, 404, 422. An `id` change gives `errors.id = ["The id of an existing chapter cannot be changed."]`. |
 | R7 | DELETE | `/api/chapters/{id}` | `ChapterController@destroy` | sanctum | none | 200 `{"ok": true}`. Hard delete. | 401, 404 |
@@ -32,7 +34,7 @@ The `api` group holds only `SubstituteBindings`. There is no throttle and no
 
 Route order: `POST /api/chapters/reorder` and `/api/chapters/{id}` don't
 collide, because `{id}` has no POST. A `POST /api/chapters/<x>` gets 405
-(Phase 1 to capture the body).
+with `Allow: GET, HEAD, PUT, DELETE` and `{"message": "The POST method is not supported for route api/chapters/<x>. Supported methods: GET, HEAD, PUT, DELETE."}`.
 
 ### 1.2 Framework and web routes
 
@@ -65,6 +67,14 @@ items.*.rule                     nullable|string
 items.*.consolidation            nullable|array
 ```
 
+**How the rules behave (captured in Phase 1).** The header of
+`server/contract/tests/validation.rs` gives the full list:
+
+- Errors come in rule declaration order, and each wildcard rule is expanded over the data in turn.
+- `integer` follows PHP `filter_var(FILTER_VALIDATE_INT)`: `true`, `1.0` and `" 4 "` pass; `"03"`, `"3.0"`, `"1e3"` and `3.5` fail.
+- `max` counts characters.
+- `required` treats `""`, whitespace-only strings, `null` and `[]` as missing.
+
 **D-03 (spec/SPEC.md §4).** `$request->validate()` returns only the keys
 that have rules. `items.*.before/hint/after/answers/prompt/context/options/
 correctIndex/instruction/source` and everything inside `consolidation` have no
@@ -86,10 +96,29 @@ taken from the validated data.
   - `message` is the first error, plus ` (and N more error)` or ` (and N more errors)` when there are more.
 - 401: `{"message": "Unauthenticated."}`. The SPA clears its token on any 401
   outside `/api/auth/*`.
-- 404, 405, 413, 500: the body depends on `APP_DEBUG`. Phase 1 captures these
-  with `APP_DEBUG=false`. A 500 with debug off is `{"message": "Server Error"}`.
-- The SPA always sends `Accept: application/json`, so Laravel renders JSON
-  and never redirects.
+- Captured with `APP_DEBUG=false`. These bodies are pretty-printed by Laravel,
+  so compare them as parsed JSON:
+
+  | Status | When | Body |
+  |---|---|---|
+  | 404 | `findOrFail` on a chapter | `{"message": "No query results for model [App\\Models\\Chapter] <id>"}` |
+  | 404 | `findOrFail` on an upload | `{"message": "No query results for model [App\\Models\\Upload] <id>"}` |
+  | 404 | Unknown route | `{"message": "The route api/nope could not be found."}` |
+  | 405 | Wrong method | `{"message": "The POST method is not supported for route api/chapters/x. Supported methods: GET, HEAD, PUT, DELETE."}`, plus an `Allow` header |
+  | 413 | Body above `post_max_size` | `{"message": "The POST data is too large."}`. Under `php -S` an HTML PHP warning comes before it. |
+  | 500 | Debug off | `{"message": "Server Error"}` |
+- **Validation message details:**
+  - camelCase attribute names are split into words: `titleEm` → "The title em field …".
+  - Dotted paths stay as they are: "The lesson.formation field must be present."
+  - Malformed JSON is treated as an empty body.
+  - Form-encoded bodies are accepted as well as JSON.
+- The SPA always sends `Accept: application/json`, so Laravel renders JSON.
+  **Without it**, a guest gets a 500 HTML page: the auth redirect targets a
+  `login` route that doesn't exist (K11).
+- **CORS, as captured:**
+  - A preflight from an allowed origin answers 204. It echoes the origin, the requested method in `Access-Control-Allow-Methods`, and the requested headers in `Access-Control-Allow-Headers`, with `Access-Control-Max-Age: 0`.
+  - A preflight from an unknown origin answers 204 with no `Access-Control-Allow-Origin`.
+  - Every response carries `Vary: Origin` and `Cache-Control: no-cache, private`.
 
 ## 2. Models
 
@@ -111,7 +140,7 @@ taken from the validated data.
 | Key | ULID via `HasUlids`: lowercase, generated on `creating` |
 | Fillable | `path, original_name, mime, size`. **`id` is not fillable.** |
 | Casts | none. `created_at` serialises through Carbon as `YYYY-MM-DDTHH:MM:SS.000000Z`. |
-| Quirk | The controller builds the filename from `(string) Str::ulid()` (uppercase) and passes `id`, but `create()` drops it. So the row `id` is a **different** lowercase ULID than the one in `path`. Delete still works because it uses `basename(path)`. Phase 1 to confirm. |
+| Quirk | The controller builds the filename from `(string) Str::ulid()` (uppercase) and passes `id`, but `create()` drops it. So the row `id` is a **different** lowercase ULID than the one in `path`. Delete still works because it uses `basename(path)`. **Confirmed in Phase 1** (K3). |
 
 ### 2.3 `App\Models\User` → table `users`
 
@@ -235,7 +264,7 @@ None of these exist:
   - Chapter HTML refers to `uploads/<file>`, and `src/RichText.jsx` prefixes `BASE_URL`.
 - **Size limit:**
   - The rule says 5120 KB.
-  - The effective limit is PHP `upload_max_filesize`: **2M** on the local CLI. Above that, the request fails as a failed upload (422, Phase 1 to capture the message).
+  - The effective limit is PHP `upload_max_filesize`: **2M** on the local CLI. Above that, the request fails with 422 `The file failed to upload.` (K7).
 - **Export:**
   - Writes `realpath(backend/..)/src/chapters.json`.
   - Encoding: `json_encode(PRETTY_PRINT | UNESCAPED_UNICODE | UNESCAPED_SLASHES) . "\n"`, which gives a 4-space indent.
@@ -297,7 +326,9 @@ mail providers.
 - `phpunit.xml`: SQLite `:memory:`, array cache and session, sync queue.
 - Result on 2026-11-19 (`composer test`):
   `{"tool":"phpunit","result":"passed","tests":2,"passed":2,"assertions":2,"duration_ms":89}`.
-- **No API route has a test.** Phase 1 builds the whole oracle.
+- **No API route has a PHPUnit test.** Since Phase 1, the oracle is the
+  black-box contract suite `server/contract/`: 57 HTTP tests, all green
+  against Laravel. See MIGRATION_PLAN.md §4.
 - SPA: no test runner. `spec/tools/check.mjs` checks content (Node, no deps).
 
 ## 10. Behaviours that look like bugs (candidates for `KNOWN_ISSUES.md`)
@@ -314,3 +345,6 @@ mail providers.
 | K8 | `reorder` silently ignores unknown ids, and doesn't require the full set (gaps or duplicate positions are possible) | §1.1 R8 |
 | K9 | `number` is not unique (D-10). The placeholder chapter collides with number 7. | spec/SPEC.md §4 |
 | K10 | `payload` stores the client's raw `number` (a string `"3"` stays a string) while the column is cast to int | §1.3 |
+
+Phase 1 confirmed K1–K10 and added K11–K13. Status, decisions and test names
+are in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).

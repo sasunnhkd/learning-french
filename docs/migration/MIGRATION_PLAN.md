@@ -1,7 +1,9 @@
 # Migration plan: Laravel API → Rust (Axum)
 
-Status: **Phase 0 committed. Q1, Q2, Q2a, Q12, Q13 and Q14 are decided.
-Phase 1 starts with the toolchain install.** No Rust code has been written yet.
+Status: **Phase 1 done (2026-11-20).** The contract suite is green against
+Laravel: 57 tests, plus 4 helper unit tests. Next is Phase 2, the Rust
+foundation. The open decisions are Q16 (K11) and the defaults marked in
+`KNOWN_ISSUES.md`.
 
 **Decided 2026-11-19 (Q1): option A.** Port today's 12-route local backoffice
 API 1:1 to Rust. The "Under B" notes below are kept only as reference for a
@@ -62,12 +64,17 @@ changes under B.
 | Q6 | Framework routes. F1 `/` (Blade welcome), F3 `/sanctum/csrf-cookie`, F4/F5 `/storage/{path}`: drop? F2 `/up`: keep? | Drop F1, F3, F4, F5. Keep `/up` (200, plain body). | Phase 2 |
 | Q7 | K3 upload id mismatch: keep it, or use the filename ULID as the row id? | **Fix for new rows.** Old rows keep working because delete goes through `path`. | Slice 4 |
 | Q8 | K4 SVG uploads (XSS vector on the public origin): keep, drop SVG, or sanitise? | Drop SVG, unless you use it. There are 0 uploads today. | Slice 4 |
-| Q9 | K5: add a login rate limit, and optionally expire or prune tokens? | Add a limit (5/min per IP). Leave expiry as is. | Slice 1 |
+| Q9 | K5: add a login rate limit, and optionally expire or prune tokens? | Add a limit (5/min per IP), configurable through env and turned off by `run-rust.sh`, because the contract suite logs in about 60 times. Leave expiry as is. | Slice 1 |
 | Q10 | K6: keep the absolute `path` and `written:false` + 200 in the export response? | Keep `written`, return `path` relative to the repo. | Slice 5 |
 | Q11 | Packaging: systemd + versioned tarball (global rules, SPEC §6), or Docker? | systemd + tarball. Docker only if you want it. | Phase 6 |
-| Q12 | Contract suite language: Node `node:test` (Node 22 is already installed, no new deps), Rust integration tests, or Hurl (a new tool to vet)? | **Decided 2026-11-19: Rust integration tests.** The suite is the `server/contract` crate. It uses `reqwest` and reads `BASE_URL`. It is one suite for both apps, with a `TARGET=laravel|rust` switch. The switch changes only the cases tagged as approved differences in `KNOWN_ISSUES.md` (Q2). As a result, the toolchain install (Q14) moves to the start of Phase 1. | Phase 1 |
+| Q12 | Contract suite language: Node `node:test` (Node 22 is already installed, no new deps), Rust integration tests, or Hurl (a new tool to vet)? | **Decided 2026-11-19: Rust integration tests.** The suite is the `server/contract` crate. It reads `BASE_URL` and uses a small std-only HTTP/1.1 client (`contract::Req`) instead of `reqwest`. That way its only dependency is `serde_json`. It is one suite for both apps, with a `TARGET=laravel|rust` switch. The switch changes only the cases tagged as approved differences in `KNOWN_ISSUES.md` (Q2). As a result, the toolchain install (Q14) moves to the start of Phase 1. | Phase 1 |
 | Q13 | The repo is public, and `backend/`, `spec/`, the SPA changes and `CLAUDE.md` are all uncommitted. What goes into commits on `migration/rust`? | **Decided 2026-11-19: migration files only.** Phase commits contain only `docs/migration/` and `server/` (which holds the contract crate), after a secret scan of the staged diff. `backend/`, `spec/`, `CLAUDE.md` and the SPA changes stay uncommitted. Nothing is pushed without your OK. | Phase 0 commit |
-| Q14 | Install the Rust toolchain (rustup) plus `cargo-audit`, `cargo-deny`, `sqlx-cli`, and later `oha`? Each one gets vetted under the package-safety rule first. | Yes, at the **start of Phase 1** (because Q12 chose Rust tests). The Phase 1 crates are `tokio`, `reqwest`, `serde_json` and `tempfile`. `reqwest` would use `default-features = false`, with only the `json` and `multipart` features, if vetting confirms that. The suite only calls `http://127.0.0.1`, so no TLS backend is needed. **Route decided 2026-11-19:** download `sh.rustup.rs` to the scratchpad,
+| Q14 | Install the Rust toolchain (rustup) plus `cargo-audit`, `cargo-deny`, `sqlx-cli`, and later `oha`? Each one gets vetted under the package-safety rule first. | Yes, at the **start of Phase 1** (because Q12 chose Rust tests). **Phase 1 crates (vetted 2026-11-20):** only `serde_json` 1.0.154 with `preserve_order`. HTTP is hand-written on `std::net`, so `tokio`, `reqwest` and `tempfile` were not needed.
+
+- Lock: 15 crates, from the dtolnay, BurntSushi, rust-lang, bluss/cuviper and orlp crates.io accounts.
+- `serde_derive`, `syn`, `quote` and `proc-macro2` are locked through serde_core's `cfg(any())` version pin, but are never built.
+- The build scripts only probe `rustc --version` and write to `OUT_DIR`.
+- OSV check of `Cargo.lock`: no advisories, no banned crates. Re-run it with `python3 -I server/scripts/osv-audit.py server/Cargo.lock` until `cargo-audit` is installed. **Route decided 2026-11-19:** download `sh.rustup.rs` to the scratchpad,
 read it, then run it with `--no-modify-path` so no shell profile is edited.
 **Done 2026-11-19:**
 
@@ -83,6 +90,7 @@ read it, then run it with `--no-modify-path` so no shell profile is edited.
   (RUSTSEC-2026-0260): `proc-macro1` (a typosquat), and `arrayref` 0.3.10,
   `internment` 0.8.7 and `append-only-vec` 0.1.9. | Phase 1 |
 | Q15 | Upload size: keep Laravel's effective 2M cap (from PHP `upload_max_filesize`), or honour the 5120 KB rule? | 5120 KB. That is what the rule says. | Slice 4 |
+| Q16 | K11 (found in Phase 1): a guest request without `Accept: application/json` gets a 500 HTML page from Laravel. Should Rust answer 401 JSON instead? | **Default: yes**, always 401 `{"message":"Unauthenticated."}`. The SPA always sends the header, so it sees no change. | Slice 1 |
 
 ## 1. Architecture (option A)
 
@@ -122,10 +130,12 @@ server/
     uploads/            # handlers, MIME sniffing (incl. SVG), path guard
     export.rs           # PHP-compatible pretty JSON writer (4 spaces, unescaped, trailing \n)
   tests/                # Rust unit/integration tests (token vectors, JSON writer, validation messages)
-  contract/             # workspace member: HTTP parity suite (reqwest), BASE_URL-driven (Q12)
+  scripts/osv-audit.py  # OSV advisory check of Cargo.lock + banned-crate list (until cargo-audit/deny are installed)
+  contract/             # workspace member: HTTP parity suite (std-only client + serde_json), BASE_URL-driven (Q12)
+    src/lib.rs          # Ctx (env), Req/Resp HTTP client, validation_body, php_pretty, crc32b, TINY_PNG
     tests/*.rs          # one file per route group
     run-laravel.sh      # sandbox copy + temp SQLite + seed + artisan serve on 127.0.0.1, killed at a 600 s hard deadline
-    run-rust.sh         # same sandbox, Rust binary
+    run-rust.sh         # same sandbox, Rust binary (Phase 2)
 ```
 
 ### Crates (each vetted before adding, versions pinned in `Cargo.lock`)
@@ -156,7 +166,7 @@ Each phase ends with:
 | Phase | Work | Done when | Under B |
 |---|---|---|---|
 | 0 | INSTRUCTION, INVENTORY, this plan | Q1, Q2, Q2a, Q12, Q13 and Q14 are decided (2026-11-19). The other questions run on the defaults stated here until you override them. | same |
-| 1 | Toolchain install (Q14, each tool and crate vetted). A `server/` Cargo workspace holding only the `contract` crate. The suite runs against sandboxed Laravel. It covers every R1–R12 route: guest, bad or deleted token, happy path, each validation rule with its message, 404, 405, 413, CORS preflight. Fixtures come from `src/chapters.json` (26 chapters plus the placeholder). Deliverable: `KNOWN_ISSUES.md` (K1–K10 confirmed or dropped). | Suite green against Laravel. Each Q2-type difference is tagged. | Acceptance tests from SPEC §6 instead |
+| 1 | Toolchain install (Q14, each tool and crate vetted). A `server/` Cargo workspace holding only the `contract` crate. The suite runs against sandboxed Laravel. It covers every R1–R12 route: guest, bad or deleted token, happy path, each validation rule with its message, 404, 405, 413, CORS preflight. Fixtures come from `src/chapters.json` (26 chapters plus the placeholder). Deliverable: `KNOWN_ISSUES.md` (K1–K13). | **Done 2026-11-20:** 57/57 green against Laravel in about 20 s. With `TARGET=rust`, exactly the 11 tagged tests fail (KNOWN_ISSUES). | Acceptance tests from SPEC §6 instead |
 | 2 | `server/app` crate skeleton, config, tracing, `/up`, error type, CORS (exact origin list), SQLite pool, sqlx baseline proved by a `.schema` diff, `cargo sqlx prepare`. | `cargo fmt/clippy/test` green. `/up` and 401-for-guest contract tests pass against Rust. | MariaDB pool, new schema as `.sql` |
 | 3.1 | Auth slice: Sanctum token module (vectors from real Laravel-made tokens), guard extractor, `last_used_at`, login and logout | R1, R2 and every guest/bad-token case green | Cookie auth, CSRF, register, verify, reset |
 | 3.2 | Chapters read: R3, R4 (ordering, shape, null `lesson`, `items` default `[]`) | green | Public read endpoints + ETag |
@@ -193,18 +203,18 @@ Strangler or route-by-route routing isn't worth it for 12 routes and one user.
 
 | Laravel | Rust handler | Contract test | Status |
 |---|---|---|---|
-| R1 `POST /api/auth/login` | `auth::login` | `server/contract/tests/auth.rs` | pending |
-| R2 `POST /api/auth/logout` | `auth::logout` | `server/contract/tests/auth.rs` | pending |
-| R3 `GET /api/chapters` | `chapters::index` | `server/contract/tests/chapters_read.rs` | pending |
-| R4 `GET /api/chapters/{id}` | `chapters::show` | `server/contract/tests/chapters_read.rs` | pending |
-| R5 `POST /api/chapters` | `chapters::store` | `server/contract/tests/chapters_write.rs` | pending |
-| R6 `PUT /api/chapters/{id}` | `chapters::update` | `server/contract/tests/chapters_write.rs` | pending |
-| R7 `DELETE /api/chapters/{id}` | `chapters::destroy` | `server/contract/tests/chapters_write.rs` | pending |
-| R8 `POST /api/chapters/reorder` | `chapters::reorder` | `server/contract/tests/chapters_write.rs` | pending |
-| R9 `GET /api/uploads` | `uploads::index` | `server/contract/tests/uploads.rs` | pending |
-| R10 `POST /api/uploads` | `uploads::store` | `server/contract/tests/uploads.rs` | pending |
-| R11 `DELETE /api/uploads/{id}` | `uploads::destroy` | `server/contract/tests/uploads.rs` | pending |
-| R12 `POST /api/export` | `export::run` | `server/contract/tests/export.rs` | pending |
-| F2 `GET /up` | `health` | `server/contract/tests/framework.rs` | pending |
-| F1, F3, F4, F5 | dropped (Q6) | `server/contract/tests/framework.rs` asserts 404 | pending approval |
+| R1 `POST /api/auth/login` | `auth::login` | `server/contract/tests/auth.rs` | Laravel ✓, Rust pending |
+| R2 `POST /api/auth/logout` | `auth::logout` | `server/contract/tests/auth.rs` | Laravel ✓, Rust pending |
+| R3 `GET /api/chapters` | `chapters::index` | `server/contract/tests/chapters_read.rs` | Laravel ✓, Rust pending |
+| R4 `GET /api/chapters/{id}` | `chapters::show` | `server/contract/tests/chapters_read.rs` | Laravel ✓, Rust pending |
+| R5 `POST /api/chapters` | `chapters::store` | `server/contract/tests/chapters_write.rs`, `validation.rs` | Laravel ✓, Rust pending |
+| R6 `PUT /api/chapters/{id}` | `chapters::update` | `server/contract/tests/chapters_write.rs`, `validation.rs` | Laravel ✓, Rust pending |
+| R7 `DELETE /api/chapters/{id}` | `chapters::destroy` | `server/contract/tests/chapters_write.rs` | Laravel ✓, Rust pending |
+| R8 `POST /api/chapters/reorder` | `chapters::reorder` | `server/contract/tests/chapters_write.rs` | Laravel ✓, Rust pending |
+| R9 `GET /api/uploads` | `uploads::index` | `server/contract/tests/uploads.rs` | Laravel ✓, Rust pending |
+| R10 `POST /api/uploads` | `uploads::store` | `server/contract/tests/uploads.rs` | Laravel ✓, Rust pending |
+| R11 `DELETE /api/uploads/{id}` | `uploads::destroy` | `server/contract/tests/uploads.rs` | Laravel ✓, Rust pending |
+| R12 `POST /api/export` | `export::run` | `server/contract/tests/export.rs` | Laravel ✓, Rust pending |
+| F2 `GET /up` | `health` | `server/contract/tests/framework.rs` | Laravel ✓, Rust pending |
+| F1, F3, F4, F5 | dropped (Q6) | `server/contract/tests/framework.rs` asserts 404 | Laravel ✓, Rust pending (Q6 default) |
 | Jobs, commands, listeners | none exist (`inspire` only, scaffold) | — | N/A |

@@ -68,7 +68,20 @@ changes under B.
 | Q12 | Contract suite language: Node `node:test` (Node 22 is already installed, no new deps), Rust integration tests, or Hurl (a new tool to vet)? | **Decided 2026-11-19: Rust integration tests.** The suite is the `server/contract` crate. It uses `reqwest` and reads `BASE_URL`. It is one suite for both apps, with a `TARGET=laravel|rust` switch. The switch changes only the cases tagged as approved differences in `KNOWN_ISSUES.md` (Q2). As a result, the toolchain install (Q14) moves to the start of Phase 1. | Phase 1 |
 | Q13 | The repo is public, and `backend/`, `spec/`, the SPA changes and `CLAUDE.md` are all uncommitted. What goes into commits on `migration/rust`? | **Decided 2026-11-19: migration files only.** Phase commits contain only `docs/migration/` and `server/` (which holds the contract crate), after a secret scan of the staged diff. `backend/`, `spec/`, `CLAUDE.md` and the SPA changes stay uncommitted. Nothing is pushed without your OK. | Phase 0 commit |
 | Q14 | Install the Rust toolchain (rustup) plus `cargo-audit`, `cargo-deny`, `sqlx-cli`, and later `oha`? Each one gets vetted under the package-safety rule first. | Yes, at the **start of Phase 1** (because Q12 chose Rust tests). The Phase 1 crates are `tokio`, `reqwest`, `serde_json` and `tempfile`. `reqwest` would use `default-features = false`, with only the `json` and `multipart` features, if vetting confirms that. The suite only calls `http://127.0.0.1`, so no TLS backend is needed. **Route decided 2026-11-19:** download `sh.rustup.rs` to the scratchpad,
-read it, then run it with `--no-modify-path` so no shell profile is edited. | Phase 1 |
+read it, then run it with `--no-modify-path` so no shell profile is edited.
+**Done 2026-11-19:**
+
+- Installer: `rustup-init.sh`, sha256 `d890e2fe…048de6`.
+- What the script does: it fetches `rustup-init` from
+  `static.rust-lang.org` over HTTPS with TLS 1.2 or later. Its only base64
+  blob is a LoongArch probe, which never runs on macOS.
+- Installed: `rustc`/`cargo` 1.100.0 stable, `clippy`, `rustfmt`, minimal
+  profile, `aarch64-apple-darwin`. Cargo lives in `~/.cargo/bin` and is not
+  on `PATH`.
+- No incident against rustup was found.
+- `deny.toml` must ban the crates from the August 2026 crates.io compromise
+  (RUSTSEC-2026-0260): `proc-macro1` (a typosquat), and `arrayref` 0.3.10,
+  `internment` 0.8.7 and `append-only-vec` 0.1.9. | Phase 1 |
 | Q15 | Upload size: keep Laravel's effective 2M cap (from PHP `upload_max_filesize`), or honour the 5120 KB rule? | 5120 KB. That is what the rule says. | Slice 4 |
 
 ## 1. Architecture (option A)

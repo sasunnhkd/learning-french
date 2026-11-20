@@ -10,6 +10,7 @@ pub mod http;
 pub mod idle;
 pub mod input;
 pub mod limiter;
+pub mod paths;
 pub mod uploads;
 pub mod validation;
 

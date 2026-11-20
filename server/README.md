@@ -40,10 +40,12 @@ down gracefully.
 ## Tests
 
 ```bash
-cd server && cargo test --workspace --lib --bins --test router --test auth --test schema_baseline
+cd server && cargo test -p grammaire-server && cargo test -p contract --lib
 ```
 
-This runs the app's unit and in-process tests (no server needed).
+This runs the app's unit and in-process tests and the contract helpers' own
+tests (no server needed). Don't use `--workspace` with `--test auth`: the
+contract crate also has an `auth` test, and it needs a running server.
 
 Contract suite, whole, against Laravel:
 

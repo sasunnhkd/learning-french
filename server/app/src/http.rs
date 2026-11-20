@@ -9,12 +9,17 @@
 //! 2. tracing (method, path, status, latency; never headers or bodies)
 //! 3. idle tracking (`IDLE_TIMEOUT_SECS`)
 //! 4. Laravel default headers (`Cache-Control: no-cache, private`)
-//! 5. CORS (`cors.rs`, the same as Laravel's HandleCors)
-//! 6. post size: 413 above 8 MiB, as PHP `post_max_size=8M` / ValidatePostSize
-//! 7. request timeout (`REQUEST_TIMEOUT_SECS`, answered with 408)
-//! 8. 405 bodies in Laravel's format
+//! 5. path handling (`paths.rs`): 400 "Malformed URL." for undecodable
+//!    paths, then route on the decoded path without trailing slashes, as
+//!    Laravel's `ValidatePathEncoding` and `UriValidator` do
+//! 6. CORS (`cors.rs`, the same as Laravel's HandleCors)
+//! 7. post size: 413 above 8 MiB, as PHP `post_max_size=8M` / ValidatePostSize
+//! 8. request timeout (`REQUEST_TIMEOUT_SECS`, answered with 408)
+//! 9. 405 bodies in Laravel's format
 //!
-//! Unknown paths get Laravel's 404 JSON from the fallback.
+//! Unknown paths get Laravel's 404 JSON from the fallback. Both the 404 and
+//! the 405 messages quote the raw request path (`paths::raw_path`), not the
+//! rewritten one.
 //!
 //! To port a slice, replace its `protected_stub` handler below
 //! with the real handler module, and add its contract tests to
@@ -27,10 +32,10 @@ use crate::db;
 use crate::error::{AppError, laravel_path};
 use crate::idle::Activity;
 use crate::limiter::LoginLimiter;
-use crate::{auth, uploads};
+use crate::{auth, paths, uploads};
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Request, State};
-use axum::http::{HeaderValue, StatusCode, Uri, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -112,6 +117,7 @@ pub fn router(state: AppState) -> Router {
             .layer(PropagateRequestIdLayer::x_request_id())
             .layer(middleware::from_fn_with_state(activity, touch_activity))
             .layer(middleware::from_fn(laravel_headers))
+            .layer(middleware::from_fn(paths::middleware))
             .layer(middleware::from_fn_with_state(cors, cors::middleware))
             .layer(middleware::from_fn(limit_post_size))
             .layer(DefaultBodyLimit::max(
@@ -132,9 +138,9 @@ async fn up(State(state): State<AppState>) -> Response {
     }
 }
 
-async fn route_not_found(uri: Uri) -> AppError {
+async fn route_not_found(req: Request) -> AppError {
     AppError::RouteNotFound {
-        path: laravel_path(uri.path()),
+        path: laravel_path(&paths::raw_path(&req)),
     }
 }
 
@@ -178,7 +184,7 @@ async fn limit_post_size(req: Request, next: Next) -> Response {
 /// Give the router's bare 405 Laravel's JSON body and `Allow` format.
 async fn method_not_allowed_body(req: Request, next: Next) -> Response {
     let method = req.method().to_string();
-    let path = laravel_path(req.uri().path());
+    let path = laravel_path(&paths::raw_path(&req));
     let res = next.run(req).await;
     if res.status() != StatusCode::METHOD_NOT_ALLOWED {
         return res;

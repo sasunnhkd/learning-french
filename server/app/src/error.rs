@@ -34,6 +34,9 @@ pub enum AppError {
         /// Comma-and-space separated, as in the `Allow` header Laravel sends.
         allowed: String,
     },
+    /// Laravel's global `ValidatePathEncoding` (`paths.rs`).
+    #[error("Malformed URL.")]
+    MalformedUrl,
     #[error("The POST data is too large.")]
     PostTooLarge,
     /// 422. `Display` is the summary message; the body lists every error.
@@ -56,6 +59,7 @@ impl AppError {
                 StatusCode::NOT_FOUND
             }
             AppError::MethodNotAllowed { .. } => StatusCode::METHOD_NOT_ALLOWED,
+            AppError::MalformedUrl => StatusCode::BAD_REQUEST,
             AppError::PostTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::TooManyAttempts { .. } => StatusCode::TOO_MANY_REQUESTS,
@@ -112,6 +116,8 @@ mod tests {
     #[test]
     fn messages_match_laravel() {
         assert_eq!(AppError::Unauthenticated.to_string(), "Unauthenticated.");
+        assert_eq!(AppError::MalformedUrl.to_string(), "Malformed URL.");
+        assert_eq!(AppError::MalformedUrl.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
             AppError::ModelNotFound {
                 model: CHAPTER_MODEL,

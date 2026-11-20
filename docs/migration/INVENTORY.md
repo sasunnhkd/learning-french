@@ -36,6 +36,25 @@ Route order: `POST /api/chapters/reorder` and `/api/chapters/{id}` don't
 collide, because `{id}` has no POST. A `POST /api/chapters/<x>` gets 405
 with `Allow: GET, HEAD, PUT, DELETE` and `{"message": "The POST method is not supported for route api/chapters/<x>. Supported methods: GET, HEAD, PUT, DELETE."}`.
 
+Path handling (applies to every route; captured in slice 3.2):
+
+- The first global middleware, `ValidatePathEncoding`, answers 400
+  `{"message": "Malformed URL."}` when `rawurldecode($request->path())` isn't
+  valid UTF-8 (`/api/chapters/%FF`). It runs before CORS, the post-size
+  check, routing and auth, so the response has `Cache-Control` but no CORS
+  headers.
+- `UriValidator` matches routes against `rawurldecode(rtrim(pathInfo, '/'))`.
+  `/api/chapters/` is the index, `x/` is `x`, `/api/%63hapters` is the
+  index, and `/api/chapters%2Freorder` is the reorder route. But `x%2F`
+  (trimmed raw, then decoded to `x/`) and `a%2Fb` match no route.
+- Route parameters are decoded once: `a%20b` → `a b`, `a%2541` → `a%41`,
+  `%` → `%`, and `+` stays `+`.
+- Route 404 and 405 messages quote the raw path (`$request->path()`, trimmed
+  of slashes): `The route api/chapters/a%2Fb could not be found.`
+
+Rust: `server/app/src/paths.rs`; contract test
+`framework::paths_are_decoded_like_laravel`.
+
 ### 1.2 Framework and web routes
 
 | # | Method | URI | Source | Used by the SPA? |

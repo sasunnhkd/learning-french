@@ -185,3 +185,68 @@ fn cors_headers_on_error_responses() {
         );
     }
 }
+
+/// Laravel matches routes against the **decoded** path with trailing
+/// slashes removed (`UriValidator`: `rawurldecode(rtrim(pathInfo, '/'))`),
+/// and the global `ValidatePathEncoding` middleware answers 400 when the
+/// decoded path isn't UTF-8. Error messages still quote the raw path.
+#[test]
+fn paths_are_decoded_like_laravel() {
+    let c = Ctx::from_env();
+    let t = c.login();
+    let model = |id: &str| json!({ "message": format!("No query results for model [App\\Models\\Chapter] {id}") });
+    let route = |p: &str| json!({ "message": format!("The route {p} could not be found.") });
+
+    let index = c.get("/api/chapters").bearer(&t).send().expect(200);
+    for p in ["/api/chapters/", "/api/chapters//", "/api/%63hapters"] {
+        assert_eq!(c.get(p).bearer(&t).send().expect(200), index, "{p}");
+    }
+
+    let cases = [
+        (
+            "/api/chapters/does-not-exist/",
+            404,
+            model("does-not-exist"),
+        ),
+        ("/api/chapters/a%20b", 404, model("a b")),
+        ("/api/chapters/a+b", 404, model("a+b")),
+        ("/api/chapters/A%41", 404, model("AA")),
+        ("/api/chapters/a%2541", 404, model("a%41")),
+        ("/api/chapters/%C3%A9t%C3%A9", 404, model("\u{e9}t\u{e9}")),
+        ("/api/chapters/%", 404, model("%")),
+        ("/api/chapters%2Freorder", 404, model("reorder")),
+        ("/api/chapters/x%2F", 404, route("api/chapters/x%2F")),
+        ("/api/chapters/a%2Fb", 404, route("api/chapters/a%2Fb")),
+        ("/api//chapters", 404, route("api//chapters")),
+        ("/api/nope/", 404, route("api/nope")),
+    ];
+    for (p, status, want) in cases {
+        assert_eq!(c.get(p).bearer(&t).send().expect(status), want, "{p}");
+    }
+
+    // The decoded path picks the route, so this is POST /api/chapters/reorder
+    // (a guest gets 401 from its auth guard, not a 404).
+    c.post("/api/chapters%2Freorder").send().expect(401);
+
+    // 405 messages quote the raw path, trimmed of slashes.
+    let body = c.post("/api/chapters/foo/").bearer(&t).send().expect(405);
+    assert_eq!(
+        body,
+        json!({ "message": "The POST method is not supported for route api/chapters/foo. Supported methods: GET, HEAD, PUT, DELETE." })
+    );
+
+    // Trailing slash on a ported POST route.
+    let login = c
+        .post("/api/auth/login/")
+        .json(&json!({ "password": c.password }))
+        .send();
+    assert_eq!(login.status, 200, "{}", login.text());
+
+    // Undecodable path: 400 before CORS, auth and routing.
+    for p in ["/api/chapters/%FF", "/api/auth/login%C3", "/nope/%E9"] {
+        let r = c.get(p).header("Origin", "http://localhost:5173").send();
+        assert_eq!(r.expect(400), json!({ "message": "Malformed URL." }), "{p}");
+        assert_eq!(r.header("Cache-Control"), Some("no-cache, private"), "{p}");
+        assert_eq!(r.header("Access-Control-Allow-Origin"), None, "{p}");
+    }
+}

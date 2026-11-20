@@ -260,3 +260,60 @@ async fn extra_frontend_origin_is_allowed() {
         "https://admin.example"
     );
 }
+
+/// `paths.rs`: Laravel's `ValidatePathEncoding` and decoded-path routing.
+#[tokio::test]
+async fn paths_are_decoded_like_laravel() {
+    let (app, _db) = common::app().await;
+
+    for uri in ["/api/chapters/%FF", "/nope/%E9/"] {
+        let req = get(uri)
+            .header(header::ORIGIN, "http://localhost:5173")
+            .body(Body::empty())
+            .unwrap();
+        let (status, headers, body) = send(&app, req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+        assert_eq!(json_of(&body), json!({ "message": "Malformed URL." }));
+        assert_eq!(headers[header::CACHE_CONTROL], "no-cache, private");
+        assert!(!headers.contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
+        assert!(!headers.contains_key(header::VARY));
+    }
+
+    let (status, _, body) = send(&app, get("/up/").body(Body::empty()).unwrap()).await;
+    assert_eq!((status, body.as_slice()), (StatusCode::OK, &b"OK"[..]));
+
+    for (uri, path) in [
+        ("/api/nope/", "api/nope"),
+        ("/api/chapters/a%2Fb", "api/chapters/a%2Fb"),
+        ("/api/chapters/x%2F", "api/chapters/x%2F"),
+        ("/api//chapters", "api//chapters"),
+    ] {
+        let (status, _, body) = send(&app, get(uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+        assert_eq!(
+            json_of(&body),
+            json!({ "message": format!("The route {path} could not be found.") }),
+            "{uri}"
+        );
+    }
+
+    // Routing runs before auth: the 405 quotes the raw path, trimmed.
+    let req = get("/api/chapters/foo/")
+        .method("POST")
+        .body(Body::empty())
+        .unwrap();
+    let (status, headers, body) = send(&app, req).await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(headers[header::ALLOW], "GET, HEAD, PUT, DELETE");
+    assert_eq!(
+        json_of(&body)["message"],
+        "The POST method is not supported for route api/chapters/foo. Supported methods: GET, HEAD, PUT, DELETE."
+    );
+
+    // The decoded path picks the route: POST /api/chapters/reorder → guard.
+    for uri in ["/api/chapters%2Freorder", "/api/auth/logout/"] {
+        let req = get(uri).method("POST").body(Body::empty()).unwrap();
+        let (status, _, _) = send(&app, req).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri}");
+    }
+}

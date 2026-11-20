@@ -15,10 +15,14 @@ path = "src/main.rs"
 # after any change.
 [dependencies]
 anyhow = "=1.0.104"
-axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "form", "query", "tokio", "matched-path", "original-uri", "tracing"] }
+bcrypt = "=0.19.3"
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "form", "query", "tokio", "matched-path", "original-uri", "tracing", "multipart"] }
 dotenvy = "=0.15.7"
+form_urlencoded = "=1.2.2"
+getrandom = "=0.4.3"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
+sha2 = "=0.11.1"
 sqlx = { version = "=0.9.1", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "macros", "migrate"] }
 thiserror = "=2.0.21"
 tokio = { version = "=1.54.1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }

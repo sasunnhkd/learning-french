@@ -109,3 +109,20 @@ fn show_unknown_chapter_is_404() {
         json!({ "message": "No query results for model [App\\Models\\Chapter] does-not-exist" })
     );
 }
+
+/// `reorder` only has POST; Laravel matches other methods on
+/// `/api/chapters/{id}` with id "reorder". Rust must route them the same way.
+#[test]
+fn reorder_path_falls_back_to_id_routes() {
+    let c = Ctx::from_env();
+    let t = c.login();
+    let want = json!({ "message": "No query results for model [App\\Models\\Chapter] reorder" });
+    for method in ["GET", "PUT", "DELETE"] {
+        let r = c
+            .req(method, "/api/chapters/reorder")
+            .bearer(&t)
+            .json(&json!({}))
+            .send();
+        assert_eq!(r.expect(404), want, "{method}");
+    }
+}

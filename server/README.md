@@ -6,13 +6,14 @@ This folder is a Cargo workspace for the 1:1 Rust port of `backend/`
 
 | Path | What it is |
 |---|---|
-| `app/` | `grammaire-server`, the Axum server. Phase 2 has the foundation: all routes behind a guard that fails closed. Slices 3.x port the handlers. |
+| `app/` | `grammaire-server`, the Axum server. Ported so far: auth (login, logout, Sanctum tokens, login rate limit) and the uploads list. The other routes return 501 to signed-in users until their slice lands. |
 | `app/migrations/` | Laravel's exact DDL as a sqlx baseline, for fresh and test databases **only**. The server never migrates the real file. |
 | `contract/` | Black-box HTTP parity suite. It runs unchanged against Laravel and Rust, with a `TARGET` switch for the differences listed in `docs/migration/KNOWN_ISSUES.md`. |
 | `contract/run.sh` | Builds a temp sandbox (copy of `backend/`, `src/chapters.json`, an empty `public/uploads/`, a fresh SQLite made by Laravel's `migrate --seed`), starts one server on `127.0.0.1:8791` with a 600 s hard deadline, then runs the suite. It never touches the real `src/` or `public/`. |
 | `contract/run-laravel.sh`, `run-rust.sh` | `run.sh laravel` and `run.sh rust` |
 | `contract/ported.txt` | Contract tests the Rust app must pass so far |
 | `scripts/osv-audit.py` | OSV advisory check of `Cargo.lock`, plus the banned-crate list. Run it after every lockfile change. |
+| `scripts/sqlx-prepare.sh` | Regenerate or `--check` the offline query data in `app/.sqlx` |
 
 You need Rust (`. "$HOME/.cargo/env"`). The contract runs also need PHP,
 `backend/vendor` (`composer install` in `backend/`), `sqlite3`, `rsync` and
@@ -39,7 +40,7 @@ down gracefully.
 ## Tests
 
 ```bash
-cd server && cargo test --workspace --lib --bins --test router --test schema_baseline
+cd server && cargo test --workspace --lib --bins --test router --test auth --test schema_baseline
 ```
 
 This runs the app's unit and in-process tests (no server needed).
@@ -67,6 +68,30 @@ command against the sandbox instead; it gets `BASE_URL`, `EDITOR_PASSWORD`,
 `TARGET`, `SANDBOX_ROOT` and `CONTRACT_DB`. Set `KEEP_SANDBOX=1` to keep the
 temp dir, and `CONTRACT_PORT` or `CONTRACT_DEADLINE` to change the port or
 the deadline.
+
+### sqlx offline query data
+
+App queries use `sqlx::query!`, which is checked against the schema at
+compile time. `server/.cargo/config.toml` sets `SQLX_OFFLINE=true`, so
+builds read `app/.sqlx` and never connect to a database. That only applies
+to cargo runs from inside `server/`. From anywhere else, export
+`SQLX_OFFLINE=true` first, as `contract/run.sh` does, or a `DATABASE_URL`
+in your environment makes the compiler open that database. After adding or
+changing a query, regenerate the data and commit `app/.sqlx`:
+
+```bash
+server/scripts/sqlx-prepare.sh
+```
+
+To fail when the data is stale (for CI):
+
+```bash
+server/scripts/sqlx-prepare.sh --check
+```
+
+The script builds a throwaway database from `app/migrations/`, Laravel's
+exact schema, and compiles with `SQLX_OFFLINE_DIR` set, so `sqlx-cli` isn't
+needed.
 
 ### Regenerate the schema fixture
 

@@ -16,7 +16,7 @@
 //!
 //! Unknown paths get Laravel's 404 JSON from the fallback.
 //!
-//! To port a slice, replace its `protected_stub`/`pending` handler below
+//! To port a slice, replace its `protected_stub` handler below
 //! with the real handler module, and add its contract tests to
 //! `server/contract/ported.txt`.
 
@@ -26,6 +26,8 @@ use crate::cors::{self, Cors};
 use crate::db;
 use crate::error::{AppError, laravel_path};
 use crate::idle::Activity;
+use crate::limiter::LoginLimiter;
+use crate::{auth, uploads};
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{HeaderValue, StatusCode, Uri, header};
@@ -48,14 +50,16 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub db: SqlitePool,
     pub activity: Arc<Activity>,
+    pub login_limiter: Arc<LoginLimiter>,
 }
 
 impl AppState {
     pub fn new(config: Config, db: SqlitePool) -> Self {
         AppState {
-            config: Arc::new(config),
             db,
             activity: Activity::new(),
+            login_limiter: Arc::new(LoginLimiter::new(config.login_rate_limit)),
+            config: Arc::new(config),
         }
     }
 }
@@ -71,8 +75,8 @@ pub fn router(state: AppState) -> Router {
     // must call the `{id}` handlers.
     let routes = Router::new()
         .route("/up", get(up))
-        .route("/api/auth/login", post(pending))
-        .route("/api/auth/logout", post(protected_stub))
+        .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/logout", post(auth::logout))
         .route("/api/chapters", get(protected_stub).post(protected_stub))
         .route(
             "/api/chapters/reorder",
@@ -87,7 +91,7 @@ pub fn router(state: AppState) -> Router {
                 .put(protected_stub)
                 .delete(protected_stub),
         )
-        .route("/api/uploads", get(protected_stub).post(protected_stub))
+        .route("/api/uploads", get(uploads::index).post(protected_stub))
         .route("/api/uploads/{id}", axum::routing::delete(protected_stub))
         .route("/api/export", post(protected_stub))
         .fallback(route_not_found)
@@ -132,11 +136,6 @@ async fn route_not_found(uri: Uri) -> AppError {
     AppError::RouteNotFound {
         path: laravel_path(uri.path()),
     }
-}
-
-/// Public route whose slice is not ported yet.
-async fn pending() -> AppError {
-    AppError::NotImplemented
 }
 
 /// Protected route whose slice is not ported yet: guests get 401 first.

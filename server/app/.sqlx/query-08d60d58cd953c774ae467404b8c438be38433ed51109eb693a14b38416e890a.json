@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "select id from users where email = ? limit 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "08d60d58cd953c774ae467404b8c438be38433ed51109eb693a14b38416e890a"
+}

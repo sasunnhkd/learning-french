@@ -139,6 +139,31 @@ impl Ctx {
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
+    /// Run PHP inside the sandbox's Laravel app (`SANDBOX_ROOT/backend`, the
+    /// same database as the server under test), with the framework booted.
+    /// Cross-checks only, e.g. a token Laravel mints is accepted by Rust and
+    /// vice versa. `args` reach the code as `$argv[1..]`, so values are never
+    /// spliced into the source. Returns trimmed stdout.
+    pub fn php(&self, code: &str, args: &[&str]) -> String {
+        let boot = "require 'vendor/autoload.php'; $app = require 'bootstrap/app.php'; \
+                    $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); ";
+        let out = Command::new(std::env::var("PHP").unwrap_or_else(|_| "php".into()))
+            .current_dir(self.sandbox.join("backend"))
+            .arg("-r")
+            .arg(format!("{boot}{code}"))
+            .arg("--")
+            .args(args)
+            .output()
+            .expect("php CLI is required for cross-checks");
+        assert!(
+            out.status.success(),
+            "php failed: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
     /// The authoritative content, as the server was seeded with it.
     pub fn seed_chapters(&self) -> Vec<Value> {
         let path = self.sandbox.join("backend/database/seeders/chapters.json");

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "insert into users (name, email, password, created_at, updated_at)\n           values (?, ?, ?, datetime('now'), datetime('now')) returning id as \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "407eb7d3a88fbf8fddeff9f6e3f54ea2a01af9f5f644597aafe6d314886e5681"
+}

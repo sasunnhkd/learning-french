@@ -33,7 +33,7 @@ approves a change. Read the code. Don't guess.
 | Concern | Choice | Why it differs from the generic brief |
 |---|---|---|
 | Runtime / web | Rust stable (≥ 1.94, required by sqlx 0.9), Tokio, Axum, tower-http (trace, timeout, request-id) | **CORS is hand-written** (`server/app/src/cors.rs`): Laravel's 204 preflights and `Vary` rules differ from `tower_http::cors`. Debian builds need rustup, because bookworm's packaged `rustc` is too old. Exact versions: MIGRATION_PLAN.md, "Crates". |
-| DB | SQLx with compile-time-checked queries, **SQLite** (same engine as today) | MariaDB only if Q4 says so. Phase 2's two infrastructure queries (schema check, health ping) use the runtime API with bound parameters. `query!` macros and `cargo sqlx prepare` start in slice 3.1. |
+| DB | SQLx with compile-time-checked queries, **SQLite** (same engine as today) | MariaDB only if Q4 says so. Phase 2's two infrastructure queries (schema check, health ping) use the runtime API with bound parameters. From slice 3.1, app queries use `query!` macros, checked against Laravel's schema. `server/scripts/sqlx-prepare.sh` writes the offline data to `server/app/.sqlx` without `sqlx-cli`. |
 | Templates | **N/A**. Laravel serves no UI for the SPA. The only Blade view is the scaffold `welcome` page on `/`. | |
 | Password hashing | **Not needed for login.** Login is `hash_equals(EDITOR_PASSWORD, input)`. `users.password` holds a bcrypt hash of random bytes that nobody ever verifies. `bcrypt` is needed only if Rust must create the `editor@local` row with a `$2y$` hash (Q-list). | Generic brief assumed user passwords |
 | Sessions / cookies / CSRF | **N/A**. Auth is bearer-token only. CORS has `supports_credentials: false`. The API group has no `statefulApi()`. | |

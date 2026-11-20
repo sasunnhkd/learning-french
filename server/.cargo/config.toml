@@ -1,0 +1,9 @@
+# sqlx query macros read app/.sqlx (committed) instead of a live database.
+# scripts/sqlx-prepare.sh regenerates it with SQLX_OFFLINE=false and a
+# throwaway database built from app/migrations/.
+#
+# Cargo applies this file only when invoked from inside server/ (it looks up
+# config from the current directory, not from --manifest-path). From
+# elsewhere, export SQLX_OFFLINE=true yourself, as contract/run.sh does.
+[env]
+SQLX_OFFLINE = "true"

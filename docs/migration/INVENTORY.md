@@ -112,6 +112,17 @@ taken from the validated data.
   - Dotted paths stay as they are: "The lesson.formation field must be present."
   - Malformed JSON is treated as an empty body.
   - Form-encoded bodies are accepted as well as JSON.
+- **Request input (captured in slice 3.1).** `$request->all()`:
+  - **merges the query string** (K14);
+  - reads JSON when Content-Type contains `/json` or `+json`, charset parameters allowed. JSON that isn't an object is cast to a PHP array (`["x"]` → `{0: "x"}`; a scalar `"x"` → `{0: "x"}`);
+  - reads `application/x-www-form-urlencoded` and multipart text fields with PHP `parse_str` rules: `password[]=x` is an array, and the last duplicate key wins;
+  - ignores any other Content-Type (`text/plain`, none).
+
+  Rust copies all of this except the query string: `server/app/src/input.rs`.
+- **Bearer parsing:** `Bearer  <t>` (two spaces) is 401. With `Bearer <t> `
+  (trailing space) the result depends on the HTTP server (K15).
+- **Token use:** each authenticated request sets `last_used_at` **and**
+  `updated_at` to now (Eloquent `save()`).
 - The SPA always sends `Accept: application/json`, so Laravel renders JSON.
   **Without it**, a guest gets a 500 HTML page: the auth redirect targets a
   `login` route that doesn't exist (K11).
@@ -327,7 +338,7 @@ mail providers.
 - Result on 2026-11-19 (`composer test`):
   `{"tool":"phpunit","result":"passed","tests":2,"passed":2,"assertions":2,"duration_ms":89}`.
 - **No API route has a PHPUnit test.** Since Phase 1, the oracle is the
-  black-box contract suite `server/contract/`: 57 HTTP tests, all green
+  black-box contract suite `server/contract/`: 64 HTTP tests (as of slice 3.1), all green
   against Laravel. See MIGRATION_PLAN.md §4.
 - SPA: no test runner. `spec/tools/check.mjs` checks content (Node, no deps).
 

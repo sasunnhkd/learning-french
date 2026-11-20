@@ -1,11 +1,14 @@
 //! Laravel-compatible error responses. Bodies are `{"message": "..."}` with
 //! the exact strings Laravel 13 produces with `APP_DEBUG=false`
 //! (captured in Phase 1; see docs/migration/INVENTORY.md §1.4). The 422
-//! validation shape is added with the validation engine in Phase 3.
+//! body comes from `validation::ValidationErrors::body`. 429 is Rust-only
+//! (login rate limit, KNOWN_ISSUES K5 / plan Q9) and uses the body of
+//! Laravel's own `throttle` middleware.
 //!
 //! Internal errors are logged with their cause and answered with
 //! `Server Error`, so nothing internal leaks to the client.
 
+use crate::validation::ValidationErrors;
 use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -33,6 +36,11 @@ pub enum AppError {
     },
     #[error("The POST data is too large.")]
     PostTooLarge,
+    /// 422. `Display` is the summary message; the body lists every error.
+    #[error("{}", .0.body()["message"].as_str().unwrap_or_default())]
+    Validation(ValidationErrors),
+    #[error("Too Many Attempts.")]
+    TooManyAttempts { retry_after_secs: u64 },
     /// Route exists but its slice is not ported yet (removed by end of Phase 3).
     #[error("Not implemented yet.")]
     NotImplemented,
@@ -49,6 +57,8 @@ impl AppError {
             }
             AppError::MethodNotAllowed { .. } => StatusCode::METHOD_NOT_ALLOWED,
             AppError::PostTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            AppError::TooManyAttempts { .. } => StatusCode::TOO_MANY_REQUESTS,
             AppError::NotImplemented => StatusCode::NOT_IMPLEMENTED,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -67,7 +77,15 @@ impl IntoResponse for AppError {
             tracing::error!(error = %format!("{cause:#}"), "internal error");
         }
         let status = self.status();
-        let mut res = (status, Json(json!({ "message": self.to_string() }))).into_response();
+        let body = match &self {
+            AppError::Validation(errors) => errors.body(),
+            other => json!({ "message": other.to_string() }),
+        };
+        let mut res = (status, Json(body)).into_response();
+        if let AppError::TooManyAttempts { retry_after_secs } = &self {
+            res.headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from(*retry_after_secs));
+        }
         if let AppError::MethodNotAllowed { allowed, .. } = &self
             && let Ok(v) = HeaderValue::from_str(allowed)
         {

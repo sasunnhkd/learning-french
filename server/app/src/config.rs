@@ -5,7 +5,7 @@
 //! |---|---|---|
 //! | `DATABASE_URL` | required, `sqlite:<path>` | `DB_CONNECTION` + `DB_DATABASE` |
 //! | `BIND_ADDR` | `127.0.0.1:8000` | `php artisan serve` default |
-//! | `EDITOR_PASSWORD` | unset: every login fails | `EDITOR_PASSWORD` |
+//! | `EDITOR_PASSWORD` | unset, empty or `0`: every login fails (PHP `empty()`) | `EDITOR_PASSWORD` |
 //! | `FRONTEND_BASE_URL` | `http://localhost:5173/learning-french` | `FRONTEND_BASE_URL` |
 //! | `FRONTEND_ORIGIN` | unset | `FRONTEND_ORIGIN` (extra CORS origin) |
 //! | `SANCTUM_TOKEN_PREFIX` | empty | `SANCTUM_TOKEN_PREFIX` |
@@ -13,6 +13,8 @@
 //! | `LOG_FORMAT` | `pretty` (`json` for machines) | `LOG_CHANNEL` |
 //! | `REQUEST_TIMEOUT_SECS` | `30` | PHP `max_execution_time` |
 //! | `IDLE_TIMEOUT_SECS` | unset: never | none (local-server rule: exit when idle) |
+//! | `LOGIN_RATE_LIMIT` | `5` login attempts per minute per IP; `0` turns it off | none (K5, plan Q9) |
+//! | `BCRYPT_ROUNDS` | `12` (4 to 31) | `BCRYPT_ROUNDS` |
 //!
 //! To add a variable: add a field here, parse it in [`Config::from_lookup`],
 //! document it in the table above and in `server/README.md`.
@@ -64,6 +66,10 @@ pub struct Config {
     pub log_format: LogFormat,
     pub request_timeout: Duration,
     pub idle_timeout: Option<Duration>,
+    /// Login attempts per minute per client IP; 0 = no limit.
+    pub login_rate_limit: u32,
+    /// Cost for the bcrypt hash stored when the editor user is created.
+    pub bcrypt_rounds: u32,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -166,10 +172,35 @@ impl Config {
             .map(|raw| positive_secs("IDLE_TIMEOUT_SECS", &raw))
             .transpose()?;
 
+        let login_rate_limit = match non_empty("LOGIN_RATE_LIMIT") {
+            Some(raw) => raw.trim().parse::<u32>().map_err(|_| {
+                invalid(
+                    "LOGIN_RATE_LIMIT",
+                    format!("expected a non-negative integer, got {raw:?}"),
+                )
+            })?,
+            None => 5,
+        };
+        let bcrypt_rounds = match non_empty("BCRYPT_ROUNDS") {
+            Some(raw) => match raw.trim().parse::<u32>() {
+                Ok(n) if (4..=31).contains(&n) => n,
+                _ => {
+                    return Err(invalid(
+                        "BCRYPT_ROUNDS",
+                        format!("expected 4 to 31, got {raw:?}"),
+                    ));
+                }
+            },
+            None => 12,
+        };
+
         Ok(Config {
             bind_addr,
             database_url,
-            editor_password: non_empty("EDITOR_PASSWORD").map(Secret),
+            // Laravel: `if (empty($expected) || ...)`, and PHP's empty("0") is true.
+            editor_password: non_empty("EDITOR_PASSWORD")
+                .filter(|p| p != "0")
+                .map(Secret),
             frontend_base_url,
             allowed_origins,
             sanctum_token_prefix: get("SANCTUM_TOKEN_PREFIX").unwrap_or_default(),
@@ -177,6 +208,8 @@ impl Config {
             log_format,
             request_timeout,
             idle_timeout,
+            login_rate_limit,
+            bcrypt_rounds,
         })
     }
 }
@@ -207,6 +240,16 @@ mod tests {
         assert_eq!(c.log_format, LogFormat::Pretty);
         assert_eq!(c.request_timeout, Duration::from_secs(30));
         assert_eq!(c.idle_timeout, None);
+        assert_eq!(c.login_rate_limit, 5);
+        assert_eq!(c.bcrypt_rounds, 12);
+    }
+
+    #[test]
+    fn php_empty_password_zero_is_unset() {
+        let c = build(&[("DATABASE_URL", "sqlite:x"), ("EDITOR_PASSWORD", "0")]).unwrap();
+        assert_eq!(c.editor_password, None);
+        let c = build(&[("DATABASE_URL", "sqlite:x"), ("LOGIN_RATE_LIMIT", "0")]).unwrap();
+        assert_eq!(c.login_rate_limit, 0);
     }
 
     #[test]
@@ -253,6 +296,9 @@ mod tests {
             ("REQUEST_TIMEOUT_SECS", "0"),
             ("IDLE_TIMEOUT_SECS", "-1"),
             ("REPO_ROOT", "/definitely/not/here"),
+            ("LOGIN_RATE_LIMIT", "-1"),
+            ("BCRYPT_ROUNDS", "3"),
+            ("BCRYPT_ROUNDS", "32"),
         ] {
             assert!(
                 matches!(

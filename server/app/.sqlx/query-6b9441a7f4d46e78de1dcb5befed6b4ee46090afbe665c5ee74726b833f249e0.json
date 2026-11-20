@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "insert into personal_access_tokens\n             (tokenable_type, tokenable_id, name, token, abilities, expires_at, created_at, updated_at)\n           values (?, ?, ?, ?, ?, null, datetime('now'), datetime('now')) returning id as \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "personal_access_tokens",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6b9441a7f4d46e78de1dcb5befed6b4ee46090afbe665c5ee74726b833f249e0"
+}

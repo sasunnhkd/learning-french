@@ -29,7 +29,8 @@
 #
 # Server rules (global): binds 127.0.0.1 and is killed at a hard deadline
 # (CONTRACT_DEADLINE seconds, default 600). The Rust server also gets
-# IDLE_TIMEOUT_SECS=600. Set KEEP_SANDBOX=1 to keep the temp dir.
+# IDLE_TIMEOUT_SECS=600 and LOGIN_RATE_LIMIT=0 (the suite logs in ~70
+# times). Set KEEP_SANDBOX=1 to keep the temp dir.
 set -euo pipefail
 
 TARGET="${1:-}"
@@ -43,6 +44,9 @@ REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PORT="${CONTRACT_PORT:-8791}"
 DEADLINE="${CONTRACT_DEADLINE:-600}"
 PHP="${PHP:-php}"
+# Cargo reads server/.cargo/config.toml only when run from inside server/,
+# and this script runs from anywhere: keep sqlx macros offline explicitly.
+export SQLX_OFFLINE=true
 CARGO_TEST=(cargo test --manifest-path "$REPO/server/Cargo.toml" -p contract --)
 
 if [ "${1:-}" = "--" ]; then
@@ -152,6 +156,7 @@ else
       FRONTEND_BASE_URL="http://localhost:5173/learning-french" \
       REPO_ROOT="$SANDBOX" \
       IDLE_TIMEOUT_SECS=600 \
+      LOGIN_RATE_LIMIT=0 \
       RUST_LOG="${RUST_LOG:-info}" \
       "$BIN"
   ) >"$SANDBOX/server.log" 2>&1 &

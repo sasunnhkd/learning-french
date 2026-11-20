@@ -12,3 +12,27 @@ guest_without_accept_header
 protected_routes_reject_guests
 wrong_method_is_405_with_allow_header
 oversized_body_is_413
+
+# Slice 3.1: auth (login, logout, token guard), plus GET /api/uploads as the
+# authenticated probe
+login_requires_password
+login_password_must_be_string
+login_wrong_password
+login_padded_password_is_not_trimmed
+login_malformed_json
+login_accepts_form_encoding
+login_token_format_and_row
+every_login_makes_a_new_token
+protected_routes_reject_bad_tokens
+token_without_id_prefix_is_accepted
+bearer_scheme_is_case_insensitive
+expired_token_is_rejected
+authenticated_request_sets_last_used_at
+logout_revokes_only_the_current_token
+deleted_user_invalidates_tokens_and_login_recreates_it
+login_password_in_query_string
+login_input_formats
+login_get_is_405
+bearer_with_extra_spaces
+laravel_minted_token_is_accepted
+server_minted_token_is_valid_in_laravel

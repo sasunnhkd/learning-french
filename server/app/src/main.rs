@@ -56,10 +56,14 @@ async fn run() -> anyhow::Result<()> {
         .with_context(|| format!("cannot listen on {addr}"))?;
     tracing::info!(%addr, "listening");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(activity, idle_timeout))
-        .await
-        .context("server error")?;
+    // Connect info gives the login limiter the peer address.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal(activity, idle_timeout))
+    .await
+    .context("server error")?;
 
     pool.close().await;
     tracing::info!("stopped");

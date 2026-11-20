@@ -233,3 +233,141 @@ fn deleted_user_invalidates_tokens_and_login_recreates_it() {
     let user = c.sqlite("select name, email, substr(password, 1, 4) from users");
     assert_eq!(user, "Editor|editor@local|$2y$");
 }
+
+/// K14 (default fix, pending confirmation): Laravel merges the query string
+/// into the input, so a password in the URL logs in. Rust reads the body only.
+#[test]
+fn login_password_in_query_string() {
+    let c = Ctx::from_env();
+    let r = c
+        .post(&format!("/api/auth/login?password={}", c.password))
+        .json(&json!({}))
+        .send();
+    if c.is_laravel() {
+        assert!(r.expect(200)["token"].is_string());
+    } else {
+        assert_validation(&r, &[("password", &["The password field is required."])]);
+    }
+}
+
+/// Input formats Laravel reads: multipart fields, `+json` and charset
+/// parameters, PHP `a[]` arrays; JSON that is not an object; non-JSON types.
+#[test]
+fn login_input_formats() {
+    let c = Ctx::from_env();
+    let pw = c.password.clone();
+    let ok = |r: contract::Resp| assert!(r.expect(200)["token"].is_string());
+    ok(c.post("/api/auth/login")
+        .multipart("password", None, "", pw.as_bytes())
+        .send());
+    for ct in [
+        "application/vnd.api+json",
+        "application/json; charset=utf-8",
+    ] {
+        ok(c.post("/api/auth/login")
+            .raw(ct, serde_json::to_vec(&json!({ "password": pw })).unwrap())
+            .send());
+    }
+    let dup = format!("password=nope&password={pw}");
+    ok(c.post("/api/auth/login")
+        .raw("application/x-www-form-urlencoded", dup.into_bytes())
+        .send());
+
+    let required: &[&str] = &["The password field is required."];
+    let string: &[&str] = &["The password field must be a string."];
+    let cases: Vec<(&str, Vec<u8>, &[&str])> = vec![
+        (
+            "text/plain",
+            serde_json::to_vec(&json!({ "password": pw })).unwrap(),
+            required,
+        ),
+        ("application/json", b"[\"x\"]".to_vec(), required),
+        ("application/json", b"\"x\"".to_vec(), required),
+        (
+            "application/json",
+            br#"{"password":null}"#.to_vec(),
+            required,
+        ),
+        (
+            "application/json",
+            br#"{"password":"   "}"#.to_vec(),
+            required,
+        ),
+        ("application/json", br#"{"password":true}"#.to_vec(), string),
+        (
+            "application/x-www-form-urlencoded",
+            format!("password[]={pw}").into_bytes(),
+            string,
+        ),
+    ];
+    for (ct, body, msgs) in cases {
+        let r = c.post("/api/auth/login").raw(ct, body).send();
+        assert_validation(&r, &[("password", msgs)]);
+    }
+}
+
+#[test]
+fn login_get_is_405() {
+    let c = Ctx::from_env();
+    let body = c.get("/api/auth/login").send().expect(405);
+    assert_eq!(
+        body,
+        json!({ "message": "The GET method is not supported for route api/auth/login. Supported methods: POST." })
+    );
+}
+
+/// `bearerToken()` is not trimmed, so an extra space after `Bearer` makes the
+/// token invalid on both apps. K15: a trailing space differs by HTTP stack.
+/// PHP's server keeps it (token invalid); hyper strips surrounding header
+/// whitespace as RFC 9110 requires (token valid).
+#[test]
+fn bearer_with_extra_spaces() {
+    let c = Ctx::from_env();
+    let t = c.login();
+    let r = c
+        .get("/api/uploads")
+        .header("Authorization", &format!("Bearer  {t}"))
+        .send();
+    assert_eq!(r.expect(401), unauthenticated(), "double space");
+    let r = c
+        .get("/api/uploads")
+        .header("Authorization", &format!("Bearer {t} "))
+        .send();
+    assert_eq!(
+        r.status,
+        c.expect_by_target("K15", 401, 200),
+        "trailing space"
+    );
+}
+
+/// Q5 / rollback: a token Laravel's own Sanctum mints is accepted, in both
+/// the `id|secret` and the secret-only forms.
+#[test]
+fn laravel_minted_token_is_accepted() {
+    let c = Ctx::from_env();
+    let token = c.php(
+        "$u = App\\Models\\User::firstOrCreate(['email' => 'editor@local'], \
+         ['name' => 'Editor', 'password' => bcrypt(bin2hex(random_bytes(16)))]); \
+         echo $u->createToken('admin-session')->plainTextToken;",
+        &[],
+    );
+    let (_, secret) = token.split_once('|').expect("id|secret");
+    for t in [token.as_str(), secret] {
+        assert_eq!(c.get("/api/uploads").bearer(t).send().status, 200, "{t}");
+    }
+}
+
+/// Rollback: a token the server under test mints is valid for Laravel's
+/// Sanctum (`findToken` + tokenable user) on the same database.
+#[test]
+fn server_minted_token_is_valid_in_laravel() {
+    let c = Ctx::from_env();
+    let token = c.login();
+    let verdict = c.php(
+        "$t = Laravel\\Sanctum\\PersonalAccessToken::findToken($argv[1]); \
+         echo ($t && $t->tokenable instanceof App\\Models\\User && $t->name === 'admin-session' \
+               && $t->can('anything')) ? 'valid' : 'invalid';",
+        &[&token],
+    );
+    assert_eq!(verdict, "valid");
+}

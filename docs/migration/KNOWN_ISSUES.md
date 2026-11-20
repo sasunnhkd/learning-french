@@ -7,7 +7,7 @@ from the running app: a sandbox copy, with `APP_DEBUG=false`, seeded from
 Each issue has a status:
 
 - **Approved fix**: you decided it. Rust differs on purpose.
-- **Default fix**: the plan's default answer, waiting for you to confirm. The first seven were approved on 2026-11-20. K14 and K15, from slice 3.1, are still pending.
+- **Default fix**: the plan's default answer, waiting for you to confirm. Every one so far has been approved: seven on 2026-11-20, and K14 and K15 later the same day. None is pending.
 - **Keep**: Rust copies Laravel.
 
 The contract suite in `server/contract/` switches its expectation on
@@ -27,8 +27,8 @@ The contract suite in `server/contract/` switches its expectation on
 | K10 | `payload` stores the client's raw `number` (the string `"3"` stays a string), while the response reads the integer column. | **Keep** (not visible in any response) | Same response; the payload copy is internal | `chapters_write::store_appends_position_and_casts_number` |
 | K11 | A guest request **without** `Accept: application/json` gets **500 HTML**: Laravel tries to redirect to a `login` route that doesn't exist. The SPA always sends the header, so it never sees this. | **Approved fix** (Q16, 2026-11-20) | Always 401 `{"message":"Unauthenticated."}` | `framework::guest_without_accept_header` |
 | K12 | Scaffold routes answer even though nothing uses them: `GET /` (Blade welcome, 200 HTML) and `GET /sanctum/csrf-cookie` (204). | **Approved fix** (Q6, 2026-11-20: drop) | 404 | `framework::scaffold_routes` |
-| K14 | Laravel's `$request->all()` merges the **query string** into the input. `POST /api/auth/login?password=…` with an empty body logs in, so the password lands in access and proxy logs. Found in slice 3.1. | **Default fix**, pending confirmation | Every route's input comes from the body only: JSON, form or multipart (`server/app/src/input.rs`). A query-string password gets 422 `The password field is required.` | `auth::login_password_in_query_string` |
-| K15 | `Authorization: Bearer <token> ` with a **trailing** space: PHP's built-in server keeps the space, so the token doesn't match (401). This is the HTTP stack, not Laravel code. | **Default: accept**, pending confirmation | hyper strips the whitespace around header values (RFC 9110 §5.5), so the token is valid (200). A leading extra space (`Bearer  x`) is still 401 on both. | `auth::bearer_with_extra_spaces` |
+| K14 | Laravel's `$request->all()` merges the **query string** into the input. `POST /api/auth/login?password=…` with an empty body logs in, so the password lands in access and proxy logs. Found in slice 3.1. | **Approved fix** (2026-11-20) | Every route's input comes from the body only: JSON, form or multipart (`server/app/src/input.rs`). A query-string password gets 422 `The password field is required.` | `auth::login_password_in_query_string` |
+| K15 | `Authorization: Bearer <token> ` with a **trailing** space: PHP's built-in server keeps the space, so the token doesn't match (401). This is the HTTP stack, not Laravel code. | **Approved: accept** (2026-11-20) | hyper strips the whitespace around header values (RFC 9110 §5.5), so the token is valid (200). A leading extra space (`Bearer  x`) is still 401 on both. | `auth::bearer_with_extra_spaces` |
 | K13 | Laravel's export writes 4-space pretty JSON, but the committed `src/chapters.json` uses 2 spaces (it came from `scripts/dump-chapters.mjs`). So the first export rewrites the whole file's indentation. | **Keep** (Rust matches Laravel byte for byte) | Same bytes | `export::export_writes_file_and_returns_chapters` |
 
 Behaviours that are environment details of `php -S`, recorded but not

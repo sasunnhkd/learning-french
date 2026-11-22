@@ -82,19 +82,19 @@ pub fn router(state: AppState) -> Router {
         .route("/up", get(up))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
-        .route("/api/chapters", get(chapters::index).post(protected_stub))
+        .route("/api/chapters", get(chapters::index).post(chapters::store))
         .route(
             "/api/chapters/reorder",
-            post(protected_stub)
+            post(chapters::reorder)
                 .get(chapters::show_reorder)
-                .put(protected_stub)
-                .delete(protected_stub),
+                .put(chapters::update_reorder)
+                .delete(chapters::destroy_reorder),
         )
         .route(
             "/api/chapters/{id}",
             get(chapters::show)
-                .put(protected_stub)
-                .delete(protected_stub),
+                .put(chapters::update)
+                .delete(chapters::destroy),
         )
         .route("/api/uploads", get(uploads::index).post(protected_stub))
         .route("/api/uploads/{id}", axum::routing::delete(protected_stub))

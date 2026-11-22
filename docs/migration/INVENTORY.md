@@ -86,13 +86,27 @@ items.*.rule                     nullable|string
 items.*.consolidation            nullable|array
 ```
 
-**How the rules behave (captured in Phase 1).** The header of
-`server/contract/tests/validation.rs` gives the full list:
+**How the rules behave (captured in Phase 1, refined in slice 3.3).** The
+header of `server/contract/tests/validation.rs` gives the full list:
 
-- Errors come in rule declaration order, and each wildcard rule is expanded over the data in turn.
-- `integer` follows PHP `filter_var(FILTER_VALIDATE_INT)`: `true`, `1.0` and `" 4 "` pass; `"03"`, `"3.0"`, `"1e3"` and `3.5` fail.
-- `max` counts characters.
+- Errors come in rule declaration order, except that every rule without `*`
+  comes first (`items` before `lesson.formation.0`). Each wildcard rule is
+  then expanded over the data in turn. For a rule ending in `*`, scalar,
+  `null` and empty children come before non-empty arrays and objects
+  (`formation: [["a"], 5]` reports `.1` before `.0`). This is
+  `ValidationRuleParser::explodeRules` plus
+  `ValidationData::initializeAndGatherData`.
+- `integer` follows PHP `filter_var(FILTER_VALIDATE_INT)`: `true`, `1.0` and `" 4 "` pass; `"03"`, `"3.0"`, `"1e3"` and `3.5` fail. Floats go through PHP's 14-digit string form, so `0.999999999999999` passes (as `"1"`) and is stored as `(int)`, which is 0.
+- `max` counts characters for strings and items for arrays, whatever the value's type; the message still says "characters". `min` on `number` compares the exact decimal (brick/math), so `false`, `0.5` and `1e-7` fail both `integer` and `min`.
+- `regex` sees PHP's string form of a number (`-5` and `1e13` match, `1e14` is `"1.0E+14"` and doesn't). `in` compares `(string)` values strictly.
 - `required` treats `""`, whitespace-only strings, `null` and `[]` as missing.
+- The middleware has already turned every blank string into `null`, and "blank" includes no-break spaces, soft hyphens and the other invisible characters `Str::trim` removes. So a blank `position` means no position, and a blank `order` entry fails `string`.
+- Wildcard attributes keep their key in messages (`lesson.formation.a.b`, `items..rule`); others are `Str::snake`d (`title em`).
+
+Rust: `server/app/src/validation.rs` (`validate`, `validation_view`),
+`server/app/src/php.rs` (PHP number and string rules),
+`server/app/src/chapters.rs` (`chapter_rules`, `to_row`). Differences: K1,
+K2, K18.
 
 **D-03 (spec/SPEC.md §4).** `$request->validate()` returns only the keys
 that have rules. `items.*.before/hint/after/answers/prompt/context/options/
@@ -359,7 +373,7 @@ mail providers.
 - Result on 2026-11-19 (`composer test`):
   `{"tool":"phpunit","result":"passed","tests":2,"passed":2,"assertions":2,"duration_ms":89}`.
 - **No API route has a PHPUnit test.** Since Phase 1, the oracle is the
-  black-box contract suite `server/contract/`: 67 HTTP tests (as of slice 3.2), all green
+  black-box contract suite `server/contract/`: 73 HTTP tests (as of slice 3.3), all green
   against Laravel. See MIGRATION_PLAN.md §4.
 - SPA: no test runner. `spec/tools/check.mjs` checks content (Node, no deps).
 

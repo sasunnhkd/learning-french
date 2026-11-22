@@ -12,6 +12,7 @@ pub mod idle;
 pub mod input;
 pub mod limiter;
 pub mod paths;
+pub mod php;
 pub mod uploads;
 pub mod validation;
 

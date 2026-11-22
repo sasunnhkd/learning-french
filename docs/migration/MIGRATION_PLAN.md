@@ -1,10 +1,11 @@
 # Migration plan: Laravel API → Rust (Axum)
 
-Status: **Slice 3.2 (chapters read) done (2026-11-22).** 38 of the 67
+Status: **Slice 3.3 (chapters write) done (2026-11-22).** 65 of the 73
 contract tests pass against Rust (`server/contract/ported.txt`). Laravel is
-67/67. Next is slice 3.3, chapters write. Q6–Q10, Q15 and Q16 were approved
+73/73. Next is slice 3.4, uploads. Q6–Q10, Q15 and Q16 were approved
 on 2026-11-20. K14 and K15 were approved later the same day. K16 and K17
-(slice 3.2) were approved as "accept" on 2026-11-22 (KNOWN_ISSUES). Q3, Q4, Q5 and Q11 still run on their defaults (local tool,
+(slice 3.2) were approved as "accept" on 2026-11-22. K18 (slice 3.3) waits for
+your answer (KNOWN_ISSUES). Q3, Q4, Q5 and Q11 still run on their defaults (local tool,
 SQLite, keep tokens valid, systemd + tarball).
 
 **Decided 2026-11-19 (Q1): option A.** Port today's 12-route local backoffice
@@ -139,10 +140,12 @@ server/
       db.rs                   # pool on the existing file, verify_schema, MIGRATOR, fresh_for_tests
       idle.rs                 # IDLE_TIMEOUT_SECS activity tracking
       input.rs                # request input like $request->all(): JSON/form/multipart, PHP a[] keys; no query string (K14)
-      validation.rs           # 422 body, display names, required/string (3.1); rule engine (3.3)
+      validation.rs           # 422 body, display names, required/string (3.1); rule engine: validate, validation_view (3.3)
+      php.rs                  # PHP rules the validator needs: blank chars, trim, float strings, filter_var int, is_numeric, brick compare (3.3)
       limiter.rs              # login rate limit (K5/Q9), LOGIN_RATE_LIMIT
       uploads.rs              # R9 list (3.1); store/delete (3.4)
-      chapters/ export.rs     # (3.2-3.5)
+      chapters.rs             # R3-R8: reads (3.2), writes, chapter_rules, reorder (3.3)
+      export.rs               # (3.5)
     .sqlx/                    # offline query data for sqlx macros (scripts/sqlx-prepare.sh)
     tests/
       auth.rs                 # in-process login/logout/guard/limiter checks
@@ -251,7 +254,7 @@ Each phase ends with:
 | 2 | `server/app` crate skeleton, config, tracing, request ids, `/up`, error type, CORS (exact origin list), post-size limit, timeout, idle exit, SQLite pool on the existing file, sqlx baseline proved against Laravel's `sqlite_master`. All 12 routes are registered behind a guard that fails closed. `run.sh` with a `rust` target and `ported.txt`. | **Done 2026-11-20:** 20 app tests (10 unit, 9 router, 1 schema baseline) plus the 4 contract helper tests. 9 contract tests pass against Rust, including the 9 MB 413 over a real socket (5/5 repeats). Laravel is still 57/57, and the `TARGET=rust` negative run still fails exactly the 10 tagged tests (corrected from 11). `cargo sqlx prepare` moves to 3.1, the first `query!` macro: Phase 2 has only two runtime queries, both with bound parameters. | MariaDB pool, new schema as `.sql` |
 | 3.1 | Auth slice: Sanctum token module (vectors from real Laravel-made tokens), guard extractor, `last_used_at`, login and logout. **Notes from the Phase 2 review:** <ul><li>Read request input with one extractor that turns a JSON **or** form body into a `serde_json::Value`, and treats a body that won't parse as `{}`. axum's `Json`/`Form` rejections are plain-text 400/415/422 errors, and they would break `login_malformed_json` and `login_accepts_form_encoding`.</li><li>Before writing that extractor, capture whether Laravel merges query-string input: does `POST /api/auth/login?password=…` with an empty body log in? If it does, that is a new keep-or-fix item (K14) for you. The recommendation would be to fix it, because passwords would land in access logs.</li><li>Add captured contract tests for GET, PUT and DELETE on `/api/chapters/reorder`. They should get 404 `… [App\\Models\\Chapter] reorder`, which pins the `{id}` delegation in `http.rs`.</li></ul> | **Done 2026-11-20:** Rust passes 30/30 ported contract tests (21 new auth tests), including tokens crossing both ways: Laravel-minted tokens work on Rust, and Rust-minted tokens pass Laravel's `findToken`. There are 40 app tests: 25 unit, 5 auth, 9 router, 1 schema. Laravel is 64/64, and the negative run fails exactly 12 tagged tests. The limiter was checked over a real socket: the third login got 429 with `Retry-After`. Queries are compile-time checked with `query!`. Offline data comes from `scripts/sqlx-prepare.sh` instead of `sqlx-cli`, so there is one tool fewer to install. `GET /api/uploads` (R9) was pulled forward as the authenticated probe the auth tests use. New items: K14 (query-string input) and K15 (trailing header space), both approved on 2026-11-20. | Cookie auth, CSRF, register, verify, reset |
 | 3.2 | Chapters read: R3, R4 (ordering, shape, null `lesson`, `items` default `[]`) | **Done 2026-11-22:** Rust passes 38/38 ported contract tests (8 new). `index` runs Eloquent's SQL verbatim, and the contract test now pins the exact id sequence. `show` returns the stored payload JSON as it is (K2, plus the new K16 numbers and K17 nesting depth, both approved as "accept" on 2026-11-22). `GET /api/chapters/reorder` is `show` with id "reorder". PUT and DELETE follow in 3.3, so `reorder_path_falls_back_to_id_routes` waits until then. **Phase 2 gap fixed** (`paths.rs`, commit `7a7399e`): Rust now routes on the decoded path without trailing slashes and answers 400 "Malformed URL." like Laravel; before, `/api/auth/login/` was a 404. Tests: 49 app tests (31 unit, 5 auth, 10 router, 2 chapters, 1 schema). Laravel is 67/67, and the negative run fails exactly 14 tagged tests. | Public read endpoints + ETag |
-| 3.3 | Chapters write: R5–R8, the validation engine, `position` logic, transaction for reorder, Q2 outcome | green, plus a round-trip test: the 26 chapters saved and read back are byte-equal (Q2 = fix) | Drafts, versions, publish |
+| 3.3 | Chapters write: R5–R8, the validation engine, `position` logic, transaction for reorder, Q2 outcome | **Done 2026-11-22:** Rust passes 65/65 ported contract tests (27 new: 26 write/validation tests, incl. `reorder_path_falls_back_to_id_routes`, and 1 login test). The round trip of the 26 seed chapters is now compared as JSON text, so key order counts. The validator is a literal port of Laravel's rule expansion and checks (`validation.rs`, `php.rs`), checked against 38 error bodies captured from Laravel. Store keeps the raw input (K1, K2). Reorder binds positions as text so SQLite stores what PDO does (K8, object keys). Such a text `position` reads fine as a plain column, but a typed or computed read fails, so `max(position)` and update's read use `cast(… as integer)` (PHP's `(int)`); export (3.5) must too. New: **K18**, pending: Rust validates padded strings untrimmed. **Slice 3.1 gap fixed:** login's `required` used Rust's Unicode `trim`, so a password of a no-break space or form feed got "required" instead of Laravel's "Invalid password." (`login_unicode_blank_password_is_checked`). Tests: 61 app tests (39 unit, 5 auth, 10 router, 6 chapters, 1 schema). Laravel is 73/73, and the negative run fails exactly 15 tagged tests. | Drafts, versions, publish |
 | 3.4 | Uploads: R9–R11, sniffing, path guard, Q7/Q8/Q15 outcomes | green | same |
 | 3.5 | Export: R12, byte-identical file against the Laravel output | green, `cmp` of both files = 0 | Replaced by publish |
 | 4 | Background work: **none to port** (INVENTORY §5). Checkpoint commit only, adding the parity matrix rows. | Matrix lists every route and command | Mail queue, scheduler |
@@ -288,10 +291,10 @@ Strangler or route-by-route routing isn't worth it for 12 routes and one user.
 | R2 `POST /api/auth/logout` | `auth::logout` | `server/contract/tests/auth.rs` | Laravel ✓, Rust ✓ |
 | R3 `GET /api/chapters` | `chapters::index` | `server/contract/tests/chapters_read.rs` | Laravel ✓, Rust ✓ |
 | R4 `GET /api/chapters/{id}` | `chapters::show` (and `show_reorder`) | `server/contract/tests/chapters_read.rs` | Laravel ✓, Rust ✓. Payload read as stored (K2, K16, K17). |
-| R5 `POST /api/chapters` | `chapters::store` | `server/contract/tests/chapters_write.rs`, `validation.rs` | Laravel ✓, Rust pending |
-| R6 `PUT /api/chapters/{id}` | `chapters::update` | `server/contract/tests/chapters_write.rs`, `validation.rs` | Laravel ✓, Rust pending |
-| R7 `DELETE /api/chapters/{id}` | `chapters::destroy` | `server/contract/tests/chapters_write.rs` | Laravel ✓, Rust pending |
-| R8 `POST /api/chapters/reorder` | `chapters::reorder` | `server/contract/tests/chapters_write.rs` | Laravel ✓, Rust pending |
+| R5 `POST /api/chapters` | `chapters::store` | `server/contract/tests/chapters_write.rs`, `validation.rs` | Laravel ✓, Rust ✓. Raw input stored (K1, K2); K18. |
+| R6 `PUT /api/chapters/{id}` | `chapters::update` | `server/contract/tests/chapters_write.rs`, `validation.rs` | Laravel ✓, Rust ✓. Also `PUT /api/chapters/reorder` (`update_reorder`). |
+| R7 `DELETE /api/chapters/{id}` | `chapters::destroy` | `server/contract/tests/chapters_write.rs` | Laravel ✓, Rust ✓. Also `DELETE /api/chapters/reorder` (`destroy_reorder`). |
+| R8 `POST /api/chapters/reorder` | `chapters::reorder` | `server/contract/tests/chapters_write.rs` | Laravel ✓, Rust ✓. One transaction; object keys as positions (K8). |
 | R9 `GET /api/uploads` | `uploads::index` | `server/contract/tests/uploads.rs`, auth probe | Laravel ✓, Rust ✓ for empty lists and auth. Row shapes are checked in 3.4. |
 | R10 `POST /api/uploads` | `uploads::store` | `server/contract/tests/uploads.rs` | Laravel ✓, Rust pending |
 | R11 `DELETE /api/uploads/{id}` | `uploads::destroy` | `server/contract/tests/uploads.rs` | Laravel ✓, Rust pending |

@@ -38,8 +38,7 @@ laravel_minted_token_is_accepted
 server_minted_token_is_valid_in_laravel
 
 # Slice 3.2: chapters read (R3 index, R4 show, GET /api/chapters/reorder as
-# show), plus Laravel's path handling (paths.rs). Not yet:
-# reorder_path_falls_back_to_id_routes needs PUT/DELETE (slice 3.3).
+# show), plus Laravel's path handling (paths.rs).
 index_shape_order_and_values
 show_matches_seed_for_every_chapter
 show_unknown_chapter_is_404
@@ -48,3 +47,33 @@ show_deeply_nested_payload
 cors_headers_on_error_responses
 cors_simple_request_echoes_allowed_origin
 paths_are_decoded_like_laravel
+
+# Slice 3.3: chapters write (R5 store, R6 update, R7 destroy, R8 reorder),
+# the validation engine, PUT/DELETE /api/chapters/reorder as {id} routes
+reorder_path_falls_back_to_id_routes
+store_validation_all_missing
+store_validation_wrong_types
+store_validation_unique_id
+store_validation_lesson_keys_present
+store_validation_max_length_and_item_type
+store_validation_whitespace_only_is_missing
+store_keeps_payload_exactly
+round_trip_of_every_seed_chapter
+store_appends_position_and_casts_number
+update_rules
+destroy_then_404
+reorder_validation
+reorder_sets_positions_by_index
+reorder_with_object_keys
+untrimmed_values_are_judged_as_sent
+max_lengths
+max_counts_characters_not_bytes
+nested_rules_in_declaration_order
+nullable_fields_accept_null
+number_integer_forms
+position_integer_forms
+required_and_array_edge_cases
+error_order_explicit_then_wildcards
+rules_on_non_string_values
+blank_strings_count_as_null
+login_unicode_blank_password_is_checked

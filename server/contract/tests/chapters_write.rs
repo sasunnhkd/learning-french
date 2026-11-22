@@ -270,7 +270,7 @@ fn store_keeps_payload_exactly() {
 }
 
 /// Q2 round trip: saving each seeded chapter unchanged (as a copy) must give
-/// back identical lesson and items in Rust. Laravel damages every chapter
+/// back identical lesson and items in Rust, byte for byte as JSON text. Laravel damages every chapter
 /// that has exercises (K1).
 #[test]
 fn round_trip_of_every_seed_chapter() {
@@ -298,7 +298,10 @@ fn round_trip_of_every_seed_chapter() {
             .bearer(&t)
             .send()
             .expect(200);
-        let same = got["lesson"] == s["lesson"] && got["items"] == s["items"];
+        // Compared as text, so key order counts too (Value equality ignores it).
+        let text = |v: &Value| serde_json::to_string(v).unwrap();
+        let same =
+            text(&got["lesson"]) == text(&s["lesson"]) && text(&got["items"]) == text(&s["items"]);
         if c.is_laravel() {
             if s["items"].as_array().is_some_and(|i| !i.is_empty()) && !same {
                 damaged += 1;
@@ -519,4 +522,169 @@ fn reorder_sets_positions_by_index() {
     assert_eq!(pos("contract-ro-c"), 0);
     assert_eq!(pos("contract-ro-a"), 2);
     assert_eq!(pos("contract-ro-b"), 3);
+}
+
+/// K8: `$position => $id` over the validated `order`. For an object the key
+/// is the position, stored with SQLite's integer affinity: "7" → 7, "05" →
+/// 5, "1.5" → 1.5 (read back as 1), "x" stays text (read back as 0, sorted
+/// after every number).
+#[test]
+fn reorder_with_object_keys() {
+    let c = Ctx::from_env();
+    let t = c.login();
+    let ids = [
+        "contract-ok-a",
+        "contract-ok-b",
+        "contract-ok-c",
+        "contract-ok-d",
+    ];
+    let _guard = Cleanup {
+        c: &c,
+        token: t.clone(),
+        ids: ids.iter().map(|s| (*s).to_string()).collect(),
+    };
+    for id in ids {
+        c.post("/api/chapters")
+            .bearer(&t)
+            .json(&minimal(id))
+            .send()
+            .expect(201);
+    }
+    let order = json!({ "order": {
+        "x": "contract-ok-a", "7": "contract-ok-b", "05": "contract-ok-c", "1.5": "contract-ok-d"
+    } });
+    let body = c
+        .post("/api/chapters/reorder")
+        .bearer(&t)
+        .json(&order)
+        .send()
+        .expect(200);
+    assert_eq!(body, json!({ "ok": true }));
+    let pos = |id: &str| {
+        c.get(&format!("/api/chapters/{id}"))
+            .bearer(&t)
+            .send()
+            .expect(200)["position"]
+            .clone()
+    };
+    assert_eq!(
+        [
+            pos("contract-ok-a"),
+            pos("contract-ok-b"),
+            pos("contract-ok-c"),
+            pos("contract-ok-d")
+        ],
+        [json!(0), json!(7), json!(5), json!(1)]
+    );
+    assert_eq!(
+        c.sqlite("select typeof(position) from chapters where id = 'contract-ok-a'")
+            .trim(),
+        "text"
+    );
+    let rows = index(&c, &t);
+    assert_eq!(
+        rows.last().unwrap()["id"],
+        "contract-ok-a",
+        "text sorts last"
+    );
+}
+
+/// K18 (follows from Q2a): Rust never trims, so a value Laravel's
+/// TrimStrings made valid is judged as sent. Laravel saves the trimmed
+/// value; Rust answers 422 (or, for reorder, ignores the padded id).
+#[test]
+fn untrimmed_values_are_judged_as_sent() {
+    let c = Ctx::from_env();
+    let t = c.login();
+    let _guard = Cleanup {
+        c: &c,
+        token: t.clone(),
+        ids: [
+            "contract-pad",
+            "contract-nl",
+            "contract-ty",
+            "contract-ff",
+            "contract-long",
+            "contract-ro-pad",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect(),
+    };
+    let mut padded_type = minimal("contract-ty");
+    padded_type["items"] = json!([{ "type": " fill " }]);
+    let mut ff = minimal("contract-ff");
+    ff["number"] = json!("\u{c}4");
+    let mut long = minimal("contract-long");
+    long["title"] = json!(format!("{} ", "t".repeat(200)));
+    let format: &[&str] = &["The id field format is invalid."];
+    let cases: Vec<(Value, &str, &str, &[&str])> = vec![
+        (minimal(" contract-pad "), "id", "contract-pad", format),
+        (minimal("contract-nl\n"), "id", "contract-nl", format),
+        (
+            padded_type,
+            "items.0.type",
+            "contract-ty",
+            &["The selected items.0.type is invalid."],
+        ),
+        // `filter_var` doesn't trim "\f", and brick can't parse it for `min`.
+        (
+            ff,
+            "number",
+            "contract-ff",
+            &[
+                "The number field must be an integer.",
+                "The number field must be at least 1.",
+            ],
+        ),
+        (
+            long,
+            "title",
+            "contract-long",
+            &["The title field must not be greater than 200 characters."],
+        ),
+    ];
+    for (p, field, saved_as, rust_errors) in cases {
+        let r = c.post("/api/chapters").bearer(&t).json(&p).send();
+        if c.expect_by_target("K18", true, false) {
+            assert_eq!(r.expect(201)["id"], saved_as, "{field}");
+        } else {
+            assert_validation(&r, &[(field, rust_errors)]);
+        }
+    }
+
+    // Laravel moves the trimmed id to position 1; Rust finds no chapter
+    // " contract-ro-pad " and leaves it where store appended it.
+    let created = c
+        .post("/api/chapters")
+        .bearer(&t)
+        .json(&minimal("contract-ro-pad"))
+        .send()
+        .expect(201);
+    c.post("/api/chapters/reorder")
+        .bearer(&t)
+        .json(&json!({ "order": ["x", " contract-ro-pad "] }))
+        .send()
+        .expect(200);
+    let shown = c
+        .get("/api/chapters/contract-ro-pad")
+        .bearer(&t)
+        .send()
+        .expect(200);
+    assert_eq!(
+        shown["position"],
+        c.expect_by_target("K18", json!(1), created["position"].clone())
+    );
+
+    // Update: Laravel trims the body's id to the route id.
+    let r = c
+        .put("/api/chapters/contract-ro-pad")
+        .bearer(&t)
+        .json(&minimal(" contract-ro-pad "))
+        .send();
+    if c.expect_by_target("K18", true, false) {
+        assert_eq!(r.expect(200)["id"], "contract-ro-pad");
+    } else {
+        assert_validation(&r, &[("id", format)]);
+    }
 }

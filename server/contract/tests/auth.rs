@@ -64,6 +64,26 @@ fn login_padded_password_is_not_trimmed() {
     assert_validation(&r, &[("password", &["Invalid password."])]);
 }
 
+/// `required` uses PHP's `trim` (`" \t\n\r\0\x0B"`), and `password` skips
+/// TrimStrings, so a password of other blank characters is checked against
+/// the real one (found in slice 3.3).
+#[test]
+fn login_unicode_blank_password_is_checked() {
+    let c = Ctx::from_env();
+    for pw in ["\u{a0}", "\u{c}", "\u{200b}"] {
+        let r = c
+            .post("/api/auth/login")
+            .json(&json!({ "password": pw }))
+            .send();
+        assert_validation(&r, &[("password", &["Invalid password."])]);
+    }
+    let r = c
+        .post("/api/auth/login")
+        .json(&json!({ "password": " \t" }))
+        .send();
+    assert_validation(&r, &[("password", &["The password field is required."])]);
+}
+
 /// Malformed JSON is treated as an empty body.
 #[test]
 fn login_malformed_json() {

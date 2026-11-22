@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "select cast(\"position\" as integer) as \"position!: i64\" from \"chapters\" where \"chapters\".\"id\" = ? limit 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "position!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6e3920c767ac1c3c858a25ef270c55e58a00ccb782344246fdcc0ef6fae6f93c"
+}

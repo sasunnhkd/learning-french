@@ -36,3 +36,15 @@ login_get_is_405
 bearer_with_extra_spaces
 laravel_minted_token_is_accepted
 server_minted_token_is_valid_in_laravel
+
+# Slice 3.2: chapters read (R3 index, R4 show, GET /api/chapters/reorder as
+# show), plus Laravel's path handling (paths.rs). Not yet:
+# reorder_path_falls_back_to_id_routes needs PUT/DELETE (slice 3.3).
+index_shape_order_and_values
+show_matches_seed_for_every_chapter
+show_unknown_chapter_is_404
+show_returns_stored_payload
+show_deeply_nested_payload
+cors_headers_on_error_responses
+cors_simple_request_echoes_allowed_origin
+paths_are_decoded_like_laravel

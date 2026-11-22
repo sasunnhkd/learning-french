@@ -162,6 +162,8 @@ taken from the validated data.
 | Timestamps | yes (`created_at`, `updated_at`, text `Y-m-d H:i:s`, UTC). **Never serialised** in responses. |
 | Hidden, appends, scopes, soft deletes, observers, relations | none |
 | Response shape (`shape()`, also used by export) | `{id, number, section, title, titleEm (from title_em), position, lesson: payload.lesson ?? null, items: payload.items ?? []}` |
+| Payload read (captured in slice 3.2) | `json_decode($payload, true)`. Text that doesn't decode, or isn't an object, counts as empty. `??` falls back only on a missing key or `null`, so `items: false` comes back as `false`. PHP's array model shows in the response: `{}` → `[]`, objects keyed `"0".."n-1"` → lists, whole floats lose `.0`, integers above `PHP_INT_MAX` become floats, and nesting may go to 512 levels. Rust returns the stored JSON as it is instead (KNOWN_ISSUES K2, K16, K17). |
+| Index order (captured in slice 3.2) | Eloquent's SQL is `select "id", "number", "section", "title", "title_em", "position" from "chapters" order by "position" asc, "number" asc`. SQLite scans `chapters_position_index` and sorts `number` in a temp B-tree. The seed has no full (position, number) ties. |
 
 ### 2.2 `App\Models\Upload` → table `uploads`
 
@@ -357,7 +359,7 @@ mail providers.
 - Result on 2026-11-19 (`composer test`):
   `{"tool":"phpunit","result":"passed","tests":2,"passed":2,"assertions":2,"duration_ms":89}`.
 - **No API route has a PHPUnit test.** Since Phase 1, the oracle is the
-  black-box contract suite `server/contract/`: 64 HTTP tests (as of slice 3.1), all green
+  black-box contract suite `server/contract/`: 67 HTTP tests (as of slice 3.2), all green
   against Laravel. See MIGRATION_PLAN.md §4.
 - SPA: no test runner. `spec/tools/check.mjs` checks content (Node, no deps).
 

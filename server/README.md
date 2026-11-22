@@ -6,7 +6,7 @@ This folder is a Cargo workspace for the 1:1 Rust port of `backend/`
 
 | Path | What it is |
 |---|---|
-| `app/` | `grammaire-server`, the Axum server. Ported so far: auth (login, logout, Sanctum tokens, login rate limit) and the uploads list. The other routes return 501 to signed-in users until their slice lands. |
+| `app/` | `grammaire-server`, the Axum server. Ported so far: auth (login, logout, Sanctum tokens, login rate limit), the uploads list, the chapter reads (`chapters.rs`), and Laravel's path handling (`paths.rs`). The other routes return 501 to signed-in users until their slice lands. |
 | `app/migrations/` | Laravel's exact DDL as a sqlx baseline, for fresh and test databases **only**. The server never migrates the real file. |
 | `contract/` | Black-box HTTP parity suite. It runs unchanged against Laravel and Rust, with a `TARGET` switch for the differences listed in `docs/migration/KNOWN_ISSUES.md`. |
 | `contract/run.sh` | Builds a temp sandbox (copy of `backend/`, `src/chapters.json`, an empty `public/uploads/`, a fresh SQLite made by Laravel's `migrate --seed`), starts one server on `127.0.0.1:8791` with a 600 s hard deadline, then runs the suite. It never touches the real `src/` or `public/`. |

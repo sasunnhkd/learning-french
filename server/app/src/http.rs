@@ -32,7 +32,7 @@ use crate::db;
 use crate::error::{AppError, laravel_path};
 use crate::idle::Activity;
 use crate::limiter::LoginLimiter;
-use crate::{auth, paths, uploads};
+use crate::{auth, chapters, paths, uploads};
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
@@ -82,17 +82,17 @@ pub fn router(state: AppState) -> Router {
         .route("/up", get(up))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
-        .route("/api/chapters", get(protected_stub).post(protected_stub))
+        .route("/api/chapters", get(chapters::index).post(protected_stub))
         .route(
             "/api/chapters/reorder",
             post(protected_stub)
-                .get(protected_stub)
+                .get(chapters::show_reorder)
                 .put(protected_stub)
                 .delete(protected_stub),
         )
         .route(
             "/api/chapters/{id}",
-            get(protected_stub)
+            get(chapters::show)
                 .put(protected_stub)
                 .delete(protected_stub),
         )

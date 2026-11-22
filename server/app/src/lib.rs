@@ -2,6 +2,7 @@
 //! Behaviour contract: `server/contract/` and `docs/migration/`.
 
 pub mod auth;
+pub mod chapters;
 pub mod config;
 pub mod cors;
 pub mod db;

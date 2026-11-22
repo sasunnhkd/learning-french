@@ -277,3 +277,288 @@ fn oversized_body_is_413() {
         .send();
     assert_eq!(r.status, 413);
 }
+
+/// A multipart body from raw parts: (Content-Disposition params, optional
+/// part Content-Type, bytes).
+fn raw_upload(c: &Ctx, t: &str, parts: &[(&str, Option<&str>, &[u8])]) -> contract::Resp {
+    let mut body = Vec::new();
+    for (disp, ct, data) in parts {
+        body.extend_from_slice(b"--XYZ\r\nContent-Disposition: form-data; ");
+        body.extend_from_slice(disp.as_bytes());
+        body.extend_from_slice(b"\r\n");
+        if let Some(ct) = ct {
+            body.extend_from_slice(format!("Content-Type: {ct}\r\n").as_bytes());
+        }
+        body.extend_from_slice(b"\r\n");
+        body.extend_from_slice(data);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(b"--XYZ--\r\n");
+    c.post("/api/uploads")
+        .bearer(t)
+        .raw("multipart/form-data; boundary=XYZ", body)
+        .send()
+}
+
+/// The type-list message differs only by SVG (K4, pinned per target in
+/// `upload_validation`); these shared tests accept either exact string.
+fn assert_errors(r: &contract::Resp, want: &[&str]) {
+    let b = r.expect(422);
+    let got: Vec<String> = b["errors"]["file"]
+        .as_array()
+        .unwrap_or_else(|| panic!("file errors: {b}"))
+        .iter()
+        .map(|m| m.as_str().unwrap().replace(ALL_TYPES, NO_SVG_TYPES))
+        .collect();
+    let want: Vec<String> = want.iter().map(|s| (*s).to_string()).collect();
+    assert_eq!(got, want, "{b}");
+    assert_eq!(b.as_object().unwrap().len(), 2);
+    assert_eq!(b["errors"].as_object().unwrap().len(), 1, "{b}");
+}
+
+fn cleanup(c: &Ctx, t: &str, b: &Value) {
+    c.delete(&format!("/api/uploads/{}", b["id"].as_str().unwrap()))
+        .bearer(t)
+        .send()
+        .expect(200);
+}
+
+const NOT_A_FILE: &str = "The file field must be a file.";
+const REQUIRED: &str = "The file field is required.";
+
+/// Probe captures from slice 3.4: which part counts as `file`, and how
+/// non-file values fail. A text field beats a file part of the same name
+/// (`array_replace_recursive($input, $files, $input)`); the last of several
+/// file parts wins; an empty file name means no file.
+#[test]
+fn which_part_is_the_file() {
+    let c = Ctx::from_env();
+    let t = c.login();
+    let f = r#"name="file""#;
+    let png = (
+        r#"name="file"; filename="b.png""#,
+        Some("image/png"),
+        TINY_PNG,
+    );
+    let txt = (
+        r#"name="file"; filename="a.txt""#,
+        Some("text/plain"),
+        &b"hi"[..],
+    );
+
+    let b = raw_upload(&c, &t, &[txt, png]).expect(201);
+    assert_eq!(b["mime"], "image/png", "last file part wins");
+    cleanup(&c, &t, &b);
+    assert_errors(&raw_upload(&c, &t, &[png, txt]), &[NO_SVG_TYPES]);
+
+    for parts in [
+        [(f, None, &b"text"[..]), png],
+        [png, (f, None, &b"text"[..])],
+    ] {
+        assert_errors(&raw_upload(&c, &t, &parts), &[NOT_A_FILE, NO_SVG_TYPES]);
+    }
+    assert_errors(
+        &raw_upload(&c, &t, &[(f, None, &vec![b'a'; 6000])]),
+        &[
+            NOT_A_FILE,
+            "The file field must not be greater than 5120 characters.",
+            NO_SVG_TYPES,
+        ],
+    );
+    assert_errors(&raw_upload(&c, &t, &[(f, None, b"")]), &[REQUIRED]);
+    assert_errors(
+        &raw_upload(
+            &c,
+            &t,
+            &[(r#"name="file"; filename="""#, Some("image/png"), TINY_PNG)],
+        ),
+        &[REQUIRED],
+    );
+    assert_errors(
+        &raw_upload(
+            &c,
+            &t,
+            &[(
+                r#"name="image"; filename="b.png""#,
+                Some("image/png"),
+                TINY_PNG,
+            )],
+        ),
+        &[REQUIRED],
+    );
+    for name in ["file[]", "file[x]"] {
+        let disp = format!(r#"name="{name}"; filename="b.png""#);
+        assert_errors(
+            &raw_upload(&c, &t, &[(&disp, Some("image/png"), TINY_PNG)]),
+            &[NOT_A_FILE, NO_SVG_TYPES],
+        );
+    }
+    // RFC 5987 `filename*` alone isn't a file name: the part is a text field.
+    assert_errors(
+        &raw_upload(
+            &c,
+            &t,
+            &[(
+                "name=\"file\"; filename*=UTF-8''%C3%A9.png",
+                Some("image/png"),
+                TINY_PNG,
+            )],
+        ),
+        &[NOT_A_FILE, NO_SVG_TYPES],
+    );
+    for body in [json!({ "file": "x" }), json!({ "file": ["x"] })] {
+        let r = c.post("/api/uploads").bearer(&t).json(&body).send();
+        assert_errors(&r, &[NOT_A_FILE, NO_SVG_TYPES]);
+    }
+    let r = c
+        .post("/api/uploads")
+        .bearer(&t)
+        .raw("application/x-www-form-urlencoded", b"file=".to_vec())
+        .send();
+    assert_errors(&r, &[REQUIRED]);
+}
+
+/// PHP's `finfo` (libmagic 5.46) decides the type, from the bytes only.
+/// Minimal signatures that pass, near misses that don't, and PHP file
+/// extensions, which Laravel refuses whatever the content.
+#[test]
+fn sniffing_edges_and_php_names() {
+    let c = Ctx::from_env();
+    let t = c.login();
+    let png16 = &TINY_PNG[..16];
+    let ok: &[(&str, &[u8], &str, &str)] = &[
+        ("m.png", png16, "image/png", "png"),
+        ("m.jpg", b"\xff\xd8\xff\x00", "image/jpeg", "jpg"),
+        ("m.gif", b"GIF8", "image/gif", "gif"),
+        ("m.webp", b"RIFF\0\0\0\0WEBP", "image/webp", "webp"),
+    ];
+    for (name, data, mime, ext) in ok {
+        let b = upload(&c, &t, name, "application/octet-stream", data).expect(201);
+        assert_eq!(
+            (b["mime"].as_str().unwrap(), b["size"].as_u64().unwrap()),
+            (*mime, data.len() as u64)
+        );
+        assert!(b["path"].as_str().unwrap().ends_with(&format!(".{ext}")));
+        cleanup(&c, &t, &b);
+    }
+    let bad: &[&[u8]] = &[
+        &TINY_PNG[..8],
+        &TINY_PNG[..15],
+        b"\xff\xd8\xff",
+        b"GIF9a",
+        b"RIFF\0\0\0\0WAVE",
+        b"",
+    ];
+    for data in bad {
+        assert_errors(&upload(&c, &t, "x.png", "image/png", data), &[NO_SVG_TYPES]);
+    }
+    for name in ["x.php", "x.PHTML", "x.php ", "x.phar"] {
+        assert_errors(
+            &upload(&c, &t, name, "image/png", TINY_PNG),
+            &[NO_SVG_TYPES],
+        );
+    }
+}
+
+/// `original_name` is the client name after the last `/` or `\`, with
+/// quoted-string escapes undone.
+#[test]
+fn original_names() {
+    let c = Ctx::from_env();
+    let t = c.login();
+    let cases = [
+        (r#"filename="a/b\\c.png""#, "c.png"),
+        (r#"filename="dir\x.png""#, "x.png"),
+        (r#"filename="a\"b.png""#, "a\"b.png"),
+        ("filename=plain.png", "plain.png"),
+        (r#"filename="é ü.png""#, "é ü.png"),
+        (r#"filename="a;b.png""#, "a;b.png"),
+        (r#"filename=".png""#, ".png"),
+        (r#"filename="noext""#, "noext"),
+    ];
+    for (param, want) in cases {
+        let disp = format!(r#"name="file"; {param}"#);
+        let b = raw_upload(&c, &t, &[(&disp, None, TINY_PNG)]).expect(201);
+        assert!(b["path"].as_str().unwrap().ends_with(".png"), "{param}");
+        let row = list(&c, &t)
+            .into_iter()
+            .find(|r| r["id"] == b["id"])
+            .expect("listed");
+        assert_eq!(row["original_name"], want, "{param}");
+        cleanup(&c, &t, &b);
+    }
+}
+
+/// Delete succeeds when the file is already gone (`is_file` check).
+#[test]
+fn delete_when_file_is_gone() {
+    let c = Ctx::from_env();
+    let t = c.login();
+    let b = upload(&c, &t, "g.png", "image/png", TINY_PNG).expect(201);
+    let on_disk = c.sandbox.join("public").join(b["path"].as_str().unwrap());
+    std::fs::remove_file(&on_disk).expect("remove uploaded file");
+    let id = b["id"].as_str().unwrap();
+    let r = c.delete(&format!("/api/uploads/{id}")).bearer(&t).send();
+    assert_eq!(r.expect(200), json!({ "ok": true }));
+    assert!(list(&c, &t).iter().all(|r| r["id"] != id));
+}
+
+/// PHP's multipart parser matches `name` and `filename` in any case and
+/// accepts single-quoted values (slice 3.4 probe). Rust parses the header
+/// the same way (`input::php_disposition`), not with multer's rules.
+#[test]
+fn content_disposition_parsing() {
+    let c = Ctx::from_env();
+    let t = c.login();
+    for disp in [
+        r#"Name="file"; filename="b.png""#,
+        r#"name="file"; FILENAME="b.png""#,
+        r#"NAME="file"; FileName="b.png""#,
+        "name='file'; filename='b.png'",
+    ] {
+        let b = raw_upload(&c, &t, &[(disp, Some("image/png"), TINY_PNG)]).expect(201);
+        let row = list(&c, &t)
+            .into_iter()
+            .find(|r| r["id"] == b["id"])
+            .expect("listed");
+        assert_eq!(row["original_name"], "b.png", "{disp}");
+        cleanup(&c, &t, &b);
+    }
+}
+
+/// K19: a file name that isn't UTF-8 (`caf\xe9.png`, Latin-1). Laravel
+/// stores the raw bytes, and then `GET /api/uploads` fails with 500 until
+/// that upload is deleted (`json_encode` can't encode the name). Rust
+/// stores the name with U+FFFD for the bad byte, so the list keeps working.
+#[test]
+fn non_utf8_file_name() {
+    let c = Ctx::from_env();
+    let t = c.login();
+    let mut body = b"--XYZ\r\nContent-Disposition: form-data; name=\"file\"; filename=\"caf\xe9.png\"\r\nContent-Type: image/png\r\n\r\n".to_vec();
+    body.extend_from_slice(TINY_PNG);
+    body.extend_from_slice(b"\r\n--XYZ--\r\n");
+    let b = c
+        .post("/api/uploads")
+        .bearer(&t)
+        .raw("multipart/form-data; boundary=XYZ", body)
+        .send()
+        .expect(201);
+    let r = c.get("/api/uploads").bearer(&t).send();
+    let status = r.status;
+    let name = if status == 200 {
+        r.json()
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == b["id"])
+            .map(|row| row["original_name"].clone())
+    } else {
+        None
+    };
+    // Delete first, so a failed assertion can't leave the list broken.
+    cleanup(&c, &t, &b);
+    assert_eq!(status, c.expect_by_target("K19", 500, 200));
+    if !c.is_laravel() {
+        assert_eq!(name, Some(json!("caf\u{fffd}.png")));
+    }
+}

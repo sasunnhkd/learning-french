@@ -15,7 +15,7 @@
 //!   then each wildcard rule's expansions, rule by rule
 //!   (`ValidationRuleParser::explodeRules`). Within one wildcard rule the
 //!   order is Laravel's `ValidationData::initializeAndGatherData`, copied
-//!   literally in [`expand`]: for a pattern ending in `*`, scalar, null and
+//!   literally in `expand`: for a pattern ending in `*`, scalar, null and
 //!   empty-array children come before non-empty arrays and objects.
 //! - **Skipping.** A rule other than `required`/`present` is skipped when
 //!   the value is a PHP-blank string, when the key is missing, when it is

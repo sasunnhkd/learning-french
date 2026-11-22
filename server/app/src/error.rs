@@ -42,6 +42,11 @@ pub enum AppError {
     /// 422. `Display` is the summary message; the body lists every error.
     #[error("{}", .0.body()["message"].as_str().unwrap_or_default())]
     Validation(ValidationErrors),
+    /// `abort(500, …)` in `UploadController::store` when the target
+    /// directory resolves outside `public/uploads` (cannot happen with the
+    /// fixed file names; kept for parity).
+    #[error("Upload target path is outside the allowed directory.")]
+    UploadPathOutside,
     #[error("Too Many Attempts.")]
     TooManyAttempts { retry_after_secs: u64 },
     /// Route exists but its slice is not ported yet (removed by end of Phase 3).
@@ -64,7 +69,9 @@ impl AppError {
             AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::TooManyAttempts { .. } => StatusCode::TOO_MANY_REQUESTS,
             AppError::NotImplemented => StatusCode::NOT_IMPLEMENTED,
-            AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::Internal(_) | AppError::UploadPathOutside => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         }
     }
 }

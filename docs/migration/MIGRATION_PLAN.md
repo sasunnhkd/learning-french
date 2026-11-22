@@ -1,11 +1,11 @@
 # Migration plan: Laravel API → Rust (Axum)
 
-Status: **Slice 3.3 (chapters write) done (2026-11-22).** 65 of the 73
+Status: **Slice 3.4 (uploads) done (2026-11-22).** 77 of the 79
 contract tests pass against Rust (`server/contract/ported.txt`). Laravel is
-73/73. Next is slice 3.4, uploads. Q6–Q10, Q15 and Q16 were approved
+79/79. Next is slice 3.5, export. Q6–Q10, Q15 and Q16 were approved
 on 2026-11-20. K14 and K15 were approved later the same day. K16 and K17
-(slice 3.2) and K18 (slice 3.3) were approved as "accept" on 2026-11-22
-(KNOWN_ISSUES). Q3, Q4, Q5 and Q11 still run on their defaults (local tool,
+(slice 3.2) and K18 (slice 3.3) were approved as "accept" on 2026-11-22.
+K19 (slice 3.4) waits for your answer (KNOWN_ISSUES). Q3, Q4, Q5 and Q11 still run on their defaults (local tool,
 SQLite, keep tokens valid, systemd + tarball).
 
 **Decided 2026-11-19 (Q1): option A.** Port today's 12-route local backoffice
@@ -143,7 +143,7 @@ server/
       validation.rs           # 422 body, display names, required/string (3.1); rule engine: validate, validation_view (3.3)
       php.rs                  # PHP rules the validator needs: blank chars, trim, float strings, filter_var int, is_numeric, brick compare (3.3)
       limiter.rs              # login rate limit (K5/Q9), LOGIN_RATE_LIMIT
-      uploads.rs              # R9 list (3.1); store/delete (3.4)
+      uploads.rs              # R9 list (3.1); store/delete, sniff, new_ulid (3.4)
       chapters.rs             # R3-R8: reads (3.2), writes, chapter_rules, reorder (3.3)
       export.rs               # (3.5)
     .sqlx/                    # offline query data for sqlx macros (scripts/sqlx-prepare.sh)
@@ -226,13 +226,14 @@ No `hex`, `subtle` or `rand` dependency of our own: hex encoding, the
 constant-time compare and token sampling are a few lines each in `auth.rs`,
 and each is unit-tested.
 
-**Planned for later slices** (each vetted when added):
+**Planned for later slices, not needed after all.** Each was replaced by a
+few lines of own, unit-tested code, so no new crate had to be vetted:
 
-| Crate | Use |
+| Crate once planned | Replaced by |
 |---|---|
-| `ulid`, `time` | Upload ids, timestamp text (3.4) |
-| `regex` | The `id` rule `^[a-z0-9-]+$`, or a hand-written check (3.3) |
-| `infer` plus an own SVG check | MIME sniffing (3.4) |
+| `ulid`, `time` | `uploads::new_ulid` (48-bit ms + 80 bits from `getrandom`); timestamps from SQLite's `datetime('now')` (3.4) |
+| `regex` | `validation::Pattern::Slug`, a byte check (3.3) |
+| `infer` plus an own SVG check | `uploads::sniff`: the libmagic 5.46 rules for the four accepted types; SVG is refused (K4), so it needs no detection (3.4) |
 
 Not needed under A: `bcrypt`/`argon2` (no password is verified), sessions,
 `lettre`, `apalis`, templates.
@@ -255,7 +256,7 @@ Each phase ends with:
 | 3.1 | Auth slice: Sanctum token module (vectors from real Laravel-made tokens), guard extractor, `last_used_at`, login and logout. **Notes from the Phase 2 review:** <ul><li>Read request input with one extractor that turns a JSON **or** form body into a `serde_json::Value`, and treats a body that won't parse as `{}`. axum's `Json`/`Form` rejections are plain-text 400/415/422 errors, and they would break `login_malformed_json` and `login_accepts_form_encoding`.</li><li>Before writing that extractor, capture whether Laravel merges query-string input: does `POST /api/auth/login?password=…` with an empty body log in? If it does, that is a new keep-or-fix item (K14) for you. The recommendation would be to fix it, because passwords would land in access logs.</li><li>Add captured contract tests for GET, PUT and DELETE on `/api/chapters/reorder`. They should get 404 `… [App\\Models\\Chapter] reorder`, which pins the `{id}` delegation in `http.rs`.</li></ul> | **Done 2026-11-20:** Rust passes 30/30 ported contract tests (21 new auth tests), including tokens crossing both ways: Laravel-minted tokens work on Rust, and Rust-minted tokens pass Laravel's `findToken`. There are 40 app tests: 25 unit, 5 auth, 9 router, 1 schema. Laravel is 64/64, and the negative run fails exactly 12 tagged tests. The limiter was checked over a real socket: the third login got 429 with `Retry-After`. Queries are compile-time checked with `query!`. Offline data comes from `scripts/sqlx-prepare.sh` instead of `sqlx-cli`, so there is one tool fewer to install. `GET /api/uploads` (R9) was pulled forward as the authenticated probe the auth tests use. New items: K14 (query-string input) and K15 (trailing header space), both approved on 2026-11-20. | Cookie auth, CSRF, register, verify, reset |
 | 3.2 | Chapters read: R3, R4 (ordering, shape, null `lesson`, `items` default `[]`) | **Done 2026-11-22:** Rust passes 38/38 ported contract tests (8 new). `index` runs Eloquent's SQL verbatim, and the contract test now pins the exact id sequence. `show` returns the stored payload JSON as it is (K2, plus the new K16 numbers and K17 nesting depth, both approved as "accept" on 2026-11-22). `GET /api/chapters/reorder` is `show` with id "reorder". PUT and DELETE follow in 3.3, so `reorder_path_falls_back_to_id_routes` waits until then. **Phase 2 gap fixed** (`paths.rs`, commit `7a7399e`): Rust now routes on the decoded path without trailing slashes and answers 400 "Malformed URL." like Laravel; before, `/api/auth/login/` was a 404. Tests: 49 app tests (31 unit, 5 auth, 10 router, 2 chapters, 1 schema). Laravel is 67/67, and the negative run fails exactly 14 tagged tests. | Public read endpoints + ETag |
 | 3.3 | Chapters write: R5–R8, the validation engine, `position` logic, transaction for reorder, Q2 outcome | **Done 2026-11-22:** Rust passes 65/65 ported contract tests (27 new: 26 write/validation tests, incl. `reorder_path_falls_back_to_id_routes`, and 1 login test). The round trip of the 26 seed chapters is now compared as JSON text, so key order counts. The validator is a literal port of Laravel's rule expansion and checks (`validation.rs`, `php.rs`), checked against 38 error bodies captured from Laravel. Store keeps the raw input (K1, K2). Reorder binds positions as text so SQLite stores what PDO does (K8, object keys). Such a text `position` reads fine as a plain column, but a typed or computed read fails, so `max(position)` and update's read use `cast(… as integer)` (PHP's `(int)`); export (3.5) must too. New: **K18**, approved as "accept" on 2026-11-22: Rust validates padded strings untrimmed. **Slice 3.1 gap fixed:** login's `required` used Rust's Unicode `trim`, so a password of a no-break space or form feed got "required" instead of Laravel's "Invalid password." (`login_unicode_blank_password_is_checked`). Tests: 61 app tests (39 unit, 5 auth, 10 router, 6 chapters, 1 schema). Laravel is 73/73, and the negative run fails exactly 15 tagged tests. | Drafts, versions, publish |
-| 3.4 | Uploads: R9–R11, sniffing, path guard, Q7/Q8/Q15 outcomes | green | same |
+| 3.4 | Uploads: R9–R11, sniffing, path guard, Q7/Q8/Q15 outcomes | **Done 2026-11-22:** Rust passes 77/77 ported contract tests (12 new: the 6 upload tests from Phase 1, 5 new shared ones and the K19 test). The edge cases were probed on Laravel first: which multipart part counts as `file` (a text field wins, the last file part wins, an empty file name is no file, `file[]` is an array), the libmagic 5.46 signatures for the four types, PHP-extension names refused (`x.php`), `original_name` after the last `/` or `\`, and delete when the file is already gone. **Multipart gap fixed** (found in review): multer matches `name`/`filename` case-sensitively and drops non-UTF-8 file names, while PHP matches in any case and keeps the bytes; `input::php_disposition` now reads the header with PHP's rules (`content_disposition_parsing`). New: **K19**, pending: Laravel's upload list breaks (500) after a non-UTF-8 file name; Rust stores the name with U+FFFD. K3 (id = file ULID), K4 (no SVG) and K7 (5120 KB) are in. No new crates: the ULID and the sniffing are own code. The file is written with `create_new` and removed again if the row insert fails (Laravel would leave it). Tests: 68 app tests (45 unit, 5 auth, 6 chapters, 10 router, 1 uploads, 1 schema). Laravel is 79/79, and the negative run fails exactly 16 tagged tests. | same |
 | 3.5 | Export: R12, byte-identical file against the Laravel output | green, `cmp` of both files = 0 | Replaced by publish |
 | 4 | Background work: **none to port** (INVENTORY §5). Checkpoint commit only, adding the parity matrix rows. | Matrix lists every route and command | Mail queue, scheduler |
 | 5 | Audit loop: fmt, clippy (pedantic where sensible), tests, the full contract suite, `cargo audit`, `cargo deny`, `sqlx prepare --check`, a route-enumeration auth test, OWASP pass, `oha` p50/p95/p99 against Laravel, `npm run build`, an admin smoke test in the browser pane. Deliverable: `AUDIT_REPORT.md`. | All clean, or the findings approved | same, larger |
@@ -295,9 +296,9 @@ Strangler or route-by-route routing isn't worth it for 12 routes and one user.
 | R6 `PUT /api/chapters/{id}` | `chapters::update` | `server/contract/tests/chapters_write.rs`, `validation.rs` | Laravel ✓, Rust ✓. Also `PUT /api/chapters/reorder` (`update_reorder`). |
 | R7 `DELETE /api/chapters/{id}` | `chapters::destroy` | `server/contract/tests/chapters_write.rs` | Laravel ✓, Rust ✓. Also `DELETE /api/chapters/reorder` (`destroy_reorder`). |
 | R8 `POST /api/chapters/reorder` | `chapters::reorder` | `server/contract/tests/chapters_write.rs` | Laravel ✓, Rust ✓. One transaction; object keys as positions (K8). |
-| R9 `GET /api/uploads` | `uploads::index` | `server/contract/tests/uploads.rs`, auth probe | Laravel ✓, Rust ✓ for empty lists and auth. Row shapes are checked in 3.4. |
-| R10 `POST /api/uploads` | `uploads::store` | `server/contract/tests/uploads.rs` | Laravel ✓, Rust pending |
-| R11 `DELETE /api/uploads/{id}` | `uploads::destroy` | `server/contract/tests/uploads.rs` | Laravel ✓, Rust pending |
+| R9 `GET /api/uploads` | `uploads::index` | `server/contract/tests/uploads.rs`, auth probe | Laravel ✓, Rust ✓ |
+| R10 `POST /api/uploads` | `uploads::store` | `server/contract/tests/uploads.rs` | Laravel ✓, Rust ✓. Sniffed type, K3, K4, K7, K19. |
+| R11 `DELETE /api/uploads/{id}` | `uploads::destroy` | `server/contract/tests/uploads.rs` | Laravel ✓, Rust ✓. File found through `path`. |
 | R12 `POST /api/export` | `export::run` | `server/contract/tests/export.rs` | Laravel ✓, Rust pending |
 | F2 `GET /up` | `http::up` | `server/contract/tests/framework.rs` | Laravel ✓, Rust ✓ |
 | Path handling (all routes: Malformed URL, decoded-path routing, trailing slash) | `paths::middleware` | `framework::paths_are_decoded_like_laravel` | Laravel ✓, Rust ✓ |

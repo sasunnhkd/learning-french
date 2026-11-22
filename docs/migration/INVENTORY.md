@@ -307,6 +307,15 @@ None of these exist:
   - The extension comes from the sniffed MIME (`png`, `jpg`, `webp`, `gif`, `svg`), falling back to the client extension.
   - A path guard checks `realpath` containment.
   - Public URL: `rtrim(FRONTEND_BASE_URL, '/') . '/' . path`.
+  - **Captured in slice 3.4** (contract tests `uploads::which_part_is_the_file`, `sniffing_edges_and_php_names`, `original_names`, `delete_when_file_is_gone`):
+    - The validator sees `array_replace_recursive($input, $files, $input)`, so a text field named `file` beats a file part of that name. Of several `file` parts the last wins. A part with `filename=""` is no file (required fails). `file[]`/`file[x]` parts make an array: "must be a file" plus the type message. A part with only `filename*=` is a text field.
+    - A non-file value fails `file` and `mimetypes`, and `max:5120` counts its characters ("… 5120 characters.").
+    - `finfo` (libmagic 5.46) types: PNG needs the signature plus the IHDR chunk header (16 bytes); JPEG needs `FF D8 FF` plus one byte; GIF needs `GIF8`; WebP needs `RIFF????WEBP`. An empty file is `application/x-empty` and fails the type rule.
+    - `shouldBlockPhpUpload`: a client extension of `php`, `php3`–`php8`, `phtml` or `phar` (trimmed, any case) fails the type rule whatever the bytes.
+    - `original_name` is the client name after the last `/` or `\`, with `\"` unescaped.
+    - PHP's multipart parser (`rfc1867.c`) matches the `name` and `filename` parameters in any case (`Name=`, `FILENAME=`), accepts `'…'` quotes, ignores `filename*=`, and keeps file-name bytes as sent. A non-UTF-8 name then breaks the list with a 500 (K19). Rust: `input::php_disposition`.
+    - Delete answers 200 when the file is already gone.
+    - Rust: `server/app/src/uploads.rs` (`upload_value`, `validate_file`, `sniff`).
   - Chapter HTML refers to `uploads/<file>`, and `src/RichText.jsx` prefixes `BASE_URL`.
 - **Size limit:**
   - The rule says 5120 KB.
@@ -373,7 +382,7 @@ mail providers.
 - Result on 2026-11-19 (`composer test`):
   `{"tool":"phpunit","result":"passed","tests":2,"passed":2,"assertions":2,"duration_ms":89}`.
 - **No API route has a PHPUnit test.** Since Phase 1, the oracle is the
-  black-box contract suite `server/contract/`: 73 HTTP tests (as of slice 3.3), all green
+  black-box contract suite `server/contract/`: 79 HTTP tests (as of slice 3.4), all green
   against Laravel. See MIGRATION_PLAN.md §4.
 - SPA: no test runner. `spec/tools/check.mjs` checks content (Node, no deps).
 

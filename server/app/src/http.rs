@@ -96,8 +96,8 @@ pub fn router(state: AppState) -> Router {
                 .put(chapters::update)
                 .delete(chapters::destroy),
         )
-        .route("/api/uploads", get(uploads::index).post(protected_stub))
-        .route("/api/uploads/{id}", axum::routing::delete(protected_stub))
+        .route("/api/uploads", get(uploads::index).post(uploads::store))
+        .route("/api/uploads/{id}", axum::routing::delete(uploads::destroy))
         .route("/api/export", post(protected_stub))
         .fallback(route_not_found)
         .with_state(state);

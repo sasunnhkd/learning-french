@@ -59,14 +59,17 @@ pub fn test_config_with(db_path: &std::path::Path, extra: &[(&str, &str)]) -> Co
         .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
         .collect();
     Config::from_lookup(
-        |k| match k {
-            "DATABASE_URL" => Some(url.clone()),
-            "REPO_ROOT" => Some(repo.display().to_string()),
-            "BCRYPT_ROUNDS" => Some("4".to_string()),
-            other => extra
-                .iter()
-                .find(|(ek, _)| ek == other)
-                .map(|(_, v)| v.clone()),
+        |k| {
+            // Extra pairs win, so a test can point REPO_ROOT elsewhere.
+            if let Some((_, v)) = extra.iter().find(|(ek, _)| ek == k) {
+                return Some(v.clone());
+            }
+            match k {
+                "DATABASE_URL" => Some(url.clone()),
+                "REPO_ROOT" => Some(repo.display().to_string()),
+                "BCRYPT_ROUNDS" => Some("4".to_string()),
+                _ => None,
+            }
         },
         &repo,
     )

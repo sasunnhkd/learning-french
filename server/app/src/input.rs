@@ -6,7 +6,7 @@
 //! |---|---|---|
 //! | contains `/json` or `+json` | `json_decode($body, true)` cast to array | same: object as is, array keyed `"0".."n"`, scalar as `{"0": v}`, invalid or `null` as `{}` |
 //! | `application/x-www-form-urlencoded` | PHP `parse_str` | same, including `a[]` and `a[b]` (see [`php_insert`]) |
-//! | `multipart/form-data` | text fields + files | text fields as above; files in [`Input::files`] |
+//! | `multipart/form-data` | text fields + files | text fields as above; files in [`Input::files`]. Each part's `Content-Disposition` is read with PHP's rules ([`php_disposition`]), not multer's |
 //! | anything else (none, `text/plain`) | empty | empty |
 //!
 //! Never use axum's `Json`/`Form` extractors for request input: their
@@ -188,6 +188,91 @@ impl<S: Send + Sync> FromRequest<S> for Input {
     }
 }
 
+/// PHP's `rfc1867.c` reading of a part's `Content-Disposition`: split on
+/// `;` outside quotes, keep the `name` and `filename` parameters (matched
+/// case-insensitively; `filename*` is ignored), and read each value with
+/// `php_ap_getword_conf`: leading spaces skipped, a `"…"` or `'…'` value up
+/// to its closing quote with `\"` and `\\` unescaped, else up to the next
+/// space. Bytes are kept as sent: a file name that isn't UTF-8 is later
+/// stored with U+FFFD in place of the bad bytes (KNOWN_ISSUES K19).
+pub fn php_disposition(header: &[u8]) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+    fn is_space(c: u8) -> bool {
+        matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
+    }
+    // php_ap_getword(line, stop): up to `stop`, skipping over quoted parts.
+    fn getword(line: &[u8], stop: u8) -> (&[u8], &[u8]) {
+        let mut i = 0;
+        while i < line.len() && line[i] != stop {
+            let q = line[i];
+            if q == b'"' || q == b'\'' {
+                i += 1;
+                while i < line.len() && line[i] != q {
+                    i += if line[i] == b'\\' && line.get(i + 1) == Some(&q) {
+                        2
+                    } else {
+                        1
+                    };
+                }
+                if i < line.len() {
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        }
+        let i = i.min(line.len());
+        let rest = if i < line.len() {
+            &line[i + 1..]
+        } else {
+            &line[i..]
+        };
+        (&line[..i], rest)
+    }
+    // php_ap_getword_conf + substring_conf
+    fn value(v: &[u8]) -> Vec<u8> {
+        let start = v.iter().position(|c| !is_space(*c)).unwrap_or(v.len());
+        let v = &v[start..];
+        let (body, quote) = match v.first() {
+            Some(&q @ (b'"' | b'\'')) => (&v[1..], Some(q)),
+            _ => {
+                let end = v.iter().position(|c| is_space(*c)).unwrap_or(v.len());
+                (&v[..end], None)
+            }
+        };
+        let mut out = Vec::with_capacity(body.len());
+        let mut i = 0;
+        while i < body.len() && Some(body[i]) != quote {
+            if body[i] == b'\\'
+                && body
+                    .get(i + 1)
+                    .is_some_and(|n| *n == b'\\' || Some(*n) == quote)
+            {
+                out.push(body[i + 1]);
+                i += 2;
+            } else {
+                out.push(body[i]);
+                i += 1;
+            }
+        }
+        out
+    }
+    let (mut name, mut file_name) = (None, None);
+    let mut cd = header;
+    while let Some(start) = cd.iter().position(|c| !is_space(*c)) {
+        let (pair, rest) = getword(&cd[start..], b';');
+        cd = rest;
+        if let Some(eq) = pair.iter().position(|c| *c == b'=') {
+            let (key, val) = (&pair[..eq], &pair[eq + 1..]);
+            if key.eq_ignore_ascii_case(b"name") {
+                name = Some(value(val));
+            } else if key.eq_ignore_ascii_case(b"filename") {
+                file_name = Some(value(val));
+            }
+        }
+    }
+    (name, file_name)
+}
+
 async fn read_multipart<S: Send + Sync>(req: Request, state: &S) -> Result<Input, AppError> {
     let Ok(mut multipart) = Multipart::from_request(req, state).await else {
         return Ok(Input::default());
@@ -204,10 +289,17 @@ async fn read_multipart<S: Send + Sync>(req: Request, state: &S) -> Result<Input
             // A malformed body ends the input, like PHP keeping what it parsed.
             Err(_) => break,
         };
-        let Some(name) = field.name().map(str::to_string) else {
+        // PHP's own Content-Disposition parsing, not multer's (see
+        // `php_disposition`).
+        let (name, file_name) = field
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .map_or((None, None), |v| php_disposition(v.as_bytes()));
+        let Some(name) = name else {
             continue;
         };
-        let file_name = field.file_name().map(str::to_string);
+        let name = String::from_utf8_lossy(&name).into_owned();
+        let file_name = file_name.map(|f| String::from_utf8_lossy(&f).into_owned());
         let content_type = field.content_type().map(str::to_string);
         let Ok(bytes) = field.bytes().await else {
             break;
@@ -285,5 +377,56 @@ mod tests {
             obj(json!({"x": {"5": "a", "6": "b"}}))
         );
         assert_eq!(form_input(b"=orphan"), Map::new());
+    }
+
+    #[test]
+    fn content_disposition_like_php() {
+        let d = |h: &[u8]| {
+            let (n, f) = php_disposition(h);
+            (
+                n.map(|v| String::from_utf8_lossy(&v).into_owned()),
+                f.map(|v| String::from_utf8_lossy(&v).into_owned()),
+            )
+        };
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(
+            d(br#"form-data; name="file"; filename="b.png""#),
+            (s("file"), s("b.png"))
+        );
+        assert_eq!(
+            d(br#"form-data; Name="file"; FILENAME="b.png""#),
+            (s("file"), s("b.png"))
+        );
+        assert_eq!(
+            d(br#"form-data; name=file; filename=plain.png"#),
+            (s("file"), s("plain.png"))
+        );
+        assert_eq!(
+            d(br#"form-data; name='file'; filename='a;b.png'"#),
+            (s("file"), s("a;b.png"))
+        );
+        assert_eq!(
+            d(br#"form-data; name="file"; filename="a\"b.png""#),
+            (s("file"), s("a\"b.png"))
+        );
+        assert_eq!(
+            d(br#"form-data; name="file"; filename="a\\b\x.png""#),
+            (s("file"), s("a\\b\\x.png"))
+        );
+        assert_eq!(
+            d(b"form-data; name=\"file\"; filename*=UTF-8''%C3%A9.png"),
+            (s("file"), None)
+        );
+        assert_eq!(
+            d(br#"form-data; name="file"; filename="""#),
+            (s("file"), s(""))
+        );
+        assert_eq!(d(br#"form-data; filename="b.png""#), (None, s("b.png")));
+        assert_eq!(
+            d(br#"form-data;name="a b";filename=x y.png"#),
+            (s("a b"), s("x"))
+        );
+        let (_, f) = php_disposition(b"form-data; name=\"file\"; filename=\"caf\xe9.png\"");
+        assert_eq!(f.unwrap(), b"caf\xe9.png");
     }
 }

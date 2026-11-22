@@ -77,3 +77,17 @@ error_order_explicit_then_wildcards
 rules_on_non_string_values
 blank_strings_count_as_null
 login_unicode_blank_password_is_checked
+
+# Slice 3.4: uploads (R10 store, R11 delete; R9 rows), sniffing, K3/K4/K7
+upload_validation
+upload_list_delete_png
+list_is_newest_first
+svg_upload
+large_uploads
+types_are_sniffed_from_content
+which_part_is_the_file
+sniffing_edges_and_php_names
+original_names
+delete_when_file_is_gone
+content_disposition_parsing
+non_utf8_file_name

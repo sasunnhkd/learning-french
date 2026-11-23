@@ -1,8 +1,8 @@
 # Migration plan: Laravel API → Rust (Axum)
 
-Status: **Phase 3 done: slice 3.5 (export) finished 2026-11-23.** Every
-route is ported. Rust passes all 80 contract tests (`server/contract/ported.txt`
-lists them all), and Laravel is 80/80. Next is the Phase 4 checkpoint. Q6–Q10, Q15 and Q16 were approved
+Status: **Phase 4 checkpoint done (2026-11-23); Phase 3 finished the same
+day.** Every route is ported. Rust passes all 80 contract tests (`server/contract/ported.txt`
+lists them all), and Laravel is 80/80. Next is Phase 5, the audit. Q6–Q10, Q15 and Q16 were approved
 on 2026-11-20. K14 and K15 were approved later the same day. K16 and K17
 (slice 3.2) and K18 (slice 3.3) were approved as "accept" on 2026-11-22, and
 K19 (slice 3.4) as a fix the same day (KNOWN_ISSUES). Q3, Q4, Q5 and Q11 still run on their defaults (local tool,
@@ -258,7 +258,7 @@ Each phase ends with:
 | 3.3 | Chapters write: R5–R8, the validation engine, `position` logic, transaction for reorder, Q2 outcome | **Done 2026-11-22:** Rust passes 65/65 ported contract tests (27 new: 26 write/validation tests, incl. `reorder_path_falls_back_to_id_routes`, and 1 login test). The round trip of the 26 seed chapters is now compared as JSON text, so key order counts. The validator is a literal port of Laravel's rule expansion and checks (`validation.rs`, `php.rs`), checked against 38 error bodies captured from Laravel. Store keeps the raw input (K1, K2). Reorder binds positions as text so SQLite stores what PDO does (K8, object keys). Such a text `position` reads fine as a plain column, but a typed or computed read fails, so `max(position)` and update's read use `cast(… as integer)` (PHP's `(int)`); export (3.5) must too. New: **K18**, approved as "accept" on 2026-11-22: Rust validates padded strings untrimmed. **Slice 3.1 gap fixed:** login's `required` used Rust's Unicode `trim`, so a password of a no-break space or form feed got "required" instead of Laravel's "Invalid password." (`login_unicode_blank_password_is_checked`). Tests: 61 app tests (39 unit, 5 auth, 10 router, 6 chapters, 1 schema). Laravel is 73/73, and the negative run fails exactly 15 tagged tests. | Drafts, versions, publish |
 | 3.4 | Uploads: R9–R11, sniffing, path guard, Q7/Q8/Q15 outcomes | **Done 2026-11-22:** Rust passes 77/77 ported contract tests (12 new: the 6 upload tests from Phase 1, 5 new shared ones and the K19 test). The edge cases were probed on Laravel first: which multipart part counts as `file` (a text field wins, the last file part wins, an empty file name is no file, `file[]` is an array), the libmagic 5.46 signatures for the four types, PHP-extension names refused (`x.php`), `original_name` after the last `/` or `\`, and delete when the file is already gone. **Multipart gap fixed** (found in review): multer matches `name`/`filename` case-sensitively and drops non-UTF-8 file names, while PHP matches in any case and keeps the bytes; `input::php_disposition` now reads the header with PHP's rules (`content_disposition_parsing`). New: **K19**, approved as a fix on 2026-11-22: Laravel's upload list breaks (500) after a non-UTF-8 file name; Rust stores the name with U+FFFD. K3 (id = file ULID), K4 (no SVG) and K7 (5120 KB) are in. No new crates: the ULID and the sniffing are own code. The file is written with `create_new` and removed again if the row insert fails (Laravel would leave it). Tests: 68 app tests (45 unit, 5 auth, 6 chapters, 10 router, 1 uploads, 1 schema). Laravel is 79/79, and the negative run fails exactly 16 tagged tests. | same |
 | 3.5 | Export: R12, byte-identical file against the Laravel output | **Done 2026-11-23:** `cmp` of the files Laravel and Rust export from the same seed = 0 (342,024 bytes); rerun with `server/contract/export-cmp.sh`. Rust passes 80/80 contract tests (3 new: the 2 export tests from Phase 1 and `export_escaping_and_text_position`, which checks control characters, U+2028/U+2029, `/`, é, emoji and DEL against PHP's bytes, plus a text `position`). Export runs Eloquent's `select *` query verbatim as a runtime query and reads `number`/`position` unchecked, so a text position reads as 0 (the 3.3 trap). The file is written in place like `@file_put_contents`; `written: false` on failure (K6 kept), `path` is relative (K6 fixed). The 501 stub (`protected_stub`, `AppError::NotImplemented`) is gone. Tests: 70 app tests (46 unit, 5 auth, 6 chapters, 1 export, 10 router, 1 uploads, 1 schema). Laravel is 80/80, and the negative run fails exactly 16 tagged tests. | Replaced by publish |
-| 4 | Background work: **none to port** (INVENTORY §5). Checkpoint commit only, adding the parity matrix rows. | Matrix lists every route and command | Mail queue, scheduler |
+| 4 | Background work: **none to port** (INVENTORY §5). Checkpoint commit only, adding the parity matrix rows. | Matrix lists every route and command | **Done 2026-11-23:** all 17 routes from `route:list` are in §4, plus rows for the shared behaviour (auth guard, input, validation, CORS, post size, errors, rate limit) and the operational pieces (commands, schema, seeding). Nothing to port: no jobs, schedule, listeners or mail exist. | Mail queue, scheduler |
 | 5 | Audit loop: fmt, clippy (pedantic where sensible), tests, the full contract suite, `cargo audit`, `cargo deny`, `sqlx prepare --check`, a route-enumeration auth test, OWASP pass, `oha` p50/p95/p99 against Laravel, `npm run build`, an admin smoke test in the browser pane. Deliverable: `AUDIT_REPORT.md`. | All clean, or the findings approved | same, larger |
 | 6 | CI workflow (fmt, clippy, test, audit, deny, sqlx check, contract suite). Packaging per Q3/Q11. `CUTOVER.md`. Swap README, project `CLAUDE.md` and `spec/SPEC.md` §6. | CI green. Rollback tested once (Laravel reads the Rust-written DB). | Debian systemd, nginx, tarball, SQL files |
 
@@ -286,6 +286,12 @@ Strangler or route-by-route routing isn't worth it for 12 routes and one user.
 
 ## 4. Parity matrix (filled in Phases 1 to 5)
 
+**Phase 4 checkpoint (2026-11-23).** `php artisan route:list --json` lists 17
+routes: R1–R12, F1–F5. Each has a row below. Laravel has no jobs, scheduled
+tasks, listeners, notifications, mail or broadcasts to port (INVENTORY §5),
+and `AppServiceProvider` is empty. The rows after the routes cover the
+behaviour every route shares and the operational pieces.
+
 | Laravel | Rust handler | Contract test | Status |
 |---|---|---|---|
 | R1 `POST /api/auth/login` | `auth::login` | `server/contract/tests/auth.rs` | Laravel ✓, Rust ✓ |
@@ -303,4 +309,14 @@ Strangler or route-by-route routing isn't worth it for 12 routes and one user.
 | F2 `GET /up` | `http::up` | `server/contract/tests/framework.rs` | Laravel ✓, Rust ✓ |
 | Path handling (all routes: Malformed URL, decoded-path routing, trailing slash) | `paths::middleware` | `framework::paths_are_decoded_like_laravel` | Laravel ✓, Rust ✓ |
 | F1, F3, F4, F5 | dropped (Q6) | `server/contract/tests/framework.rs` asserts 404 | Laravel ✓, Rust ✓ (404, Q6) |
-| Jobs, commands, listeners | none exist (`inspire` only, scaffold) | — | N/A |
+| Auth guard (Sanctum bearer tokens, `last_used_at`, 401 body) | `auth::AuthUser` | `auth.rs` (`protected_routes_reject_*`, `bearer_*`, `authenticated_request_sets_last_used_at`, token-crossing tests) | Laravel ✓, Rust ✓ (K11, K15) |
+| Request input (`$request->all()`: JSON, form, multipart, `Content-Disposition`) | `input::Input`, `input::php_disposition` | `auth::login_input_formats`, `login_password_in_query_string`, `uploads::content_disposition_parsing` | Laravel ✓, Rust ✓ (K14, K19) |
+| Validation engine (rule order, messages, blank strings) | `validation::validate`, `php.rs` | `validation.rs`, `chapters_write.rs` | Laravel ✓, Rust ✓ (K18) |
+| CORS (`HandleCors`) | `cors::middleware` | `framework::cors_*` | Laravel ✓, Rust ✓ |
+| Post size (`ValidatePostSize`, 8 MB → 413) | `http::limit_post_size` | `uploads::oversized_body_is_413` | Laravel ✓, Rust ✓ |
+| Error bodies (404 route, 405 + `Allow`, 404 model, 500) | `error::AppError`, `http::route_not_found`, `method_not_allowed_body` | `framework::unknown_api_route_is_404_json`, `wrong_method_is_405_with_allow_header`, `show_unknown_chapter_is_404` | Laravel ✓, Rust ✓ |
+| Login rate limit | `limiter.rs` | `server/app/tests/auth.rs` (off in contract runs) | Rust only (K5, Q9) |
+| Jobs, scheduler, listeners, notifications, mail, broadcasting | none exist | — | N/A (Phase 4: nothing to port) |
+| Artisan commands | only the scaffold `inspire`, plus package dev tooling (`dev`, `reload`, `dev:list`) | — | N/A |
+| Schema (`php artisan migrate`) | `app/migrations/` baseline for fresh and test databases only; the server checks the real file with `db::verify_schema` and never migrates it | `server/app/tests/schema_baseline.rs` | Rust ✓. Schema changes ship as SQL files you apply. |
+| Seeding (`ImportChaptersSeeder` from `chapters.json`) | not ported: the contract sandbox seeds with Laravel's own `migrate --seed` (`contract/run.sh`) | every contract test | N/A |

@@ -210,7 +210,8 @@ async fn to_row(
                 )
                 .fetch_one(&state.db)
                 .await?;
-                max.unwrap_or(-1) + 1
+                // Saturates where PHP would turn i64::MAX + 1 into a float.
+                max.unwrap_or(-1).saturating_add(1)
             }
         },
     };

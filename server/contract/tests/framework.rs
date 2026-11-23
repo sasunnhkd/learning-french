@@ -250,3 +250,48 @@ fn paths_are_decoded_like_laravel() {
         assert_eq!(r.header("Access-Control-Allow-Origin"), None, "{p}");
     }
 }
+
+/// Phase 5 route enumeration: every `/api` route Laravel's router has, read
+/// from the sandbox's Laravel app (not a hand-kept list), must reject guests
+/// and bad tokens with 401 when Laravel puts `auth:sanctum` on it, and must
+/// not when it doesn't (login). A route added to Laravel later shows up
+/// here and fails on Rust until it is ported.
+#[test]
+fn every_api_route_is_guarded_like_laravel() {
+    let c = Ctx::from_env();
+    let routes = c.php(
+        "echo json_encode(collect(app('router')->getRoutes()->getRoutes())\
+           ->map(fn ($r) => [$r->methods(), $r->uri(), $r->gatherMiddleware()])->values());",
+        &[],
+    );
+    let routes: Vec<(Vec<String>, String, Vec<String>)> =
+        serde_json::from_str(&routes).expect("route list JSON");
+    let unauth = serde_json::json!({ "message": "Unauthenticated." });
+    let mut checked = 0;
+    for (methods, uri, middleware) in &routes {
+        if !uri.starts_with("api/") {
+            continue;
+        }
+        let guarded = middleware.iter().any(|m| m == "auth:sanctum");
+        let path = format!("/{}", uri.replace("{id}", "x"));
+        for method in methods.iter().filter(|m| *m != "HEAD") {
+            for token in [None, Some("1|not-a-real-token")] {
+                let mut r = c.req(method, &path);
+                if let Some(t) = token {
+                    r = r.bearer(t);
+                }
+                let resp = r.send();
+                if guarded {
+                    assert_eq!(resp.status, 401, "{method} {path} token={token:?}");
+                    assert_eq!(resp.json(), unauth, "{method} {path}");
+                } else {
+                    assert_ne!(resp.status, 401, "{method} {path} is public in Laravel");
+                    assert_ne!(resp.status, 404, "{method} {path} must exist");
+                }
+            }
+            checked += 1;
+        }
+    }
+    // R1-R12. A change here means Laravel's routes changed: port them first.
+    assert_eq!(checked, 12, "api routes in Laravel's router");
+}

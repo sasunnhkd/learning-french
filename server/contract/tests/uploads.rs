@@ -562,3 +562,67 @@ fn non_utf8_file_name() {
         assert_eq!(name, Some(json!("caf\u{fffd}.png")));
     }
 }
+
+/// Phase 5: PHP's `max_file_uploads` (20), probed on Laravel. File parts
+/// after the 20th are ignored, so a 21st `file` part never wins; parts with
+/// an empty file name don't count toward the 20. (`php -S` prints a warning
+/// before the JSON when the cap is hit, so only statuses and types are
+/// compared here.)
+#[test]
+fn file_part_cap_like_php() {
+    let c = Ctx::from_env();
+    let t = c.login();
+    let mime_of = |r: &contract::Resp| {
+        let text = r.text();
+        let at = text.find('{').expect("JSON body");
+        serde_json::from_str::<Value>(&text[at..]).unwrap()["mime"].clone()
+    };
+    let txt = (r#"name="file"; filename="a.txt""#, None, &b"hi"[..]);
+    let png = (r#"name="file"; filename="p.png""#, None, TINY_PNG);
+    let gif = (
+        r#"name="file"; filename="g.gif""#,
+        None,
+        &include_bytes!("../fixtures/tiny.gif")[..],
+    );
+    // The 20th part (PNG) wins; the 21st (GIF) is ignored.
+    let mut parts = vec![txt; 19];
+    parts.extend([png, gif]);
+    let r = raw_upload(&c, &t, &parts);
+    assert_eq!((r.status, mime_of(&r)), (201, json!("image/png")));
+    let id = {
+        let text = r.text();
+        serde_json::from_str::<Value>(&text[text.find('{').unwrap()..]).unwrap()["id"].clone()
+    };
+    c.delete(&format!("/api/uploads/{}", id.as_str().unwrap()))
+        .bearer(&t)
+        .send()
+        .expect(200);
+    // 20 files under another name use up the cap.
+    let others: Vec<String> = (0..20)
+        .map(|i| format!(r#"name="other{i}"; filename="a.txt""#))
+        .collect();
+    let mut parts: Vec<(&str, Option<&str>, &[u8])> = others
+        .iter()
+        .map(|d| (d.as_str(), None, &b"hi"[..]))
+        .collect();
+    parts.push(png);
+    assert_eq!(raw_upload(&c, &t, &parts).status, 422);
+    // 20 parts with an empty file name don't.
+    let empties: Vec<String> = (0..20)
+        .map(|i| format!(r#"name="x{i}"; filename="""#))
+        .collect();
+    let mut parts: Vec<(&str, Option<&str>, &[u8])> = empties
+        .iter()
+        .map(|d| (d.as_str(), None, &b""[..]))
+        .collect();
+    parts.push(png);
+    let r = raw_upload(&c, &t, &parts);
+    assert_eq!((r.status, mime_of(&r)), (201, json!("image/png")));
+    c.delete(&format!(
+        "/api/uploads/{}",
+        r.json()["id"].as_str().unwrap()
+    ))
+    .bearer(&t)
+    .send()
+    .expect(200);
+}

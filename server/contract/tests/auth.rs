@@ -391,3 +391,69 @@ fn server_minted_token_is_valid_in_laravel() {
     );
     assert_eq!(verdict, "valid");
 }
+
+/// Phase 5 audit, F1: PHP's input limits, probed on Laravel. A form name
+/// nested deeper than `max_input_nesting_level` (64) is dropped. Of
+/// `max_input_vars` (1000), a urlencoded body keeps 1001 fields and a
+/// multipart body 1000 text fields; file parts don't count. Rust used to
+/// recurse without a limit and abort the whole process on `a[b][b]…`
+/// 20,000 levels deep, from login, with no token. The server must answer
+/// and stay up.
+#[test]
+fn form_input_limits_like_php() {
+    let c = Ctx::from_env();
+    let required: &[&str] = &["The password field is required."];
+    let form = |body: String| {
+        c.post("/api/auth/login")
+            .raw("application/x-www-form-urlencoded", body.into_bytes())
+            .send()
+    };
+    let deep = |n: usize, pw: &str| format!("password{}={pw}", "[x]".repeat(n));
+    // `php -S` prints PHP's "Input variables exceeded" startup warning as
+    // HTML before the JSON (an environment detail, like the 413 one in
+    // KNOWN_ISSUES); compare the JSON that follows it.
+    let required_after_warning = |r: contract::Resp| {
+        assert_eq!(r.status, 422, "{}", r.text());
+        let text = r.text();
+        let json: serde_json::Value =
+            serde_json::from_str(&text[text.find('{').expect("JSON body")..]).expect("JSON");
+        assert_eq!(json["errors"], json!({ "password": required }), "{text}");
+    };
+    // 64 levels: kept, so `password` is an array ("must be a string").
+    assert_validation(
+        &form(deep(64, "p")),
+        &[("password", &["The password field must be a string."])],
+    );
+    // 65 and 20,000 levels: dropped, so `password` is missing.
+    assert_validation(&form(deep(65, "p")), &[("password", required)]);
+    assert_validation(&form(deep(20_000, "p")), &[("password", required)]);
+    // Urlencoded: the 1002nd field is dropped, the 1001st kept.
+    let mut fields: Vec<String> = (0..1001).map(|i| format!("v{i}=1")).collect();
+    fields.push(format!("password={}", c.password));
+    required_after_warning(form(fields.join("&")));
+    fields.remove(0);
+    let r = form(fields.join("&"));
+    assert_eq!(r.status, 200, "password as field 1001: {}", r.text());
+    // Multipart: the 1001st text field is dropped; file parts don't count.
+    let multipart = |dummies: usize, files: usize| {
+        let mut body = String::new();
+        for i in 0..files {
+            body += &format!(
+                "--XYZ\r\nContent-Disposition: form-data; name=\"f{i}\"; filename=\"x.txt\"\r\n\r\nhi\r\n"
+            );
+        }
+        for i in 0..dummies {
+            body += &format!("--XYZ\r\nContent-Disposition: form-data; name=\"v{i}\"\r\n\r\n1\r\n");
+        }
+        body += &format!(
+            "--XYZ\r\nContent-Disposition: form-data; name=\"password\"\r\n\r\n{}\r\n--XYZ--\r\n",
+            c.password
+        );
+        c.post("/api/auth/login")
+            .raw("multipart/form-data; boundary=XYZ", body.into_bytes())
+            .send()
+    };
+    required_after_warning(multipart(1000, 0));
+    assert_eq!(multipart(999, 5).status, 200, "password as text field 1000");
+    assert_eq!(c.get("/up").send().status, 200, "server still up");
+}

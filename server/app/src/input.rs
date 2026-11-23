@@ -76,14 +76,29 @@ pub fn json_input(body: &[u8]) -> Map<String, Value> {
 /// PHP `parse_str` on an `application/x-www-form-urlencoded` body.
 pub fn form_input(body: &[u8]) -> Map<String, Value> {
     let mut root = Map::new();
-    for (k, v) in form_urlencoded::parse(body) {
+    for (k, v) in form_urlencoded::parse(body).take(MAX_FORM_VARS) {
         php_insert(&mut root, &k, Value::String(v.into_owned()));
     }
     finish(root)
 }
 
+/// PHP's `max_input_vars` (1000) as Laravel under `php -S` applies it,
+/// probed in the Phase 5 audit: a urlencoded body keeps its first **1001**
+/// fields (PHP's POST reader is off by one), a multipart body its first
+/// **1000** text fields; file parts don't count. Later fields are dropped.
+/// This also bounds the work `php_insert` does per request.
+pub const MAX_FORM_VARS: usize = 1001;
+pub const MAX_MULTIPART_VARS: usize = 1000;
+/// PHP's `max_input_nesting_level` (64): a name with more bracket levels is
+/// dropped. Without it, `a[b][b]…` 20,000 deep overflowed the stack in the
+/// recursive `finish` and aborted the server (Phase 5 audit, F1).
+pub const MAX_INPUT_NESTING: usize = 64;
+/// PHP's `max_file_uploads` (20): file parts after the 20th with a
+/// non-empty file name are ignored; parts with an empty name don't count.
+pub const MAX_FILE_UPLOADS: usize = 20;
+
 /// Split a PHP input name into its base and bracket segments:
-/// `a[b][]` → (`a`, [`b`, ``]). A `[` without a closing `]` makes the rest
+/// `a[b][]` → (`a`, [`b`, `""`]). A `[` without a closing `]` makes the rest
 /// part of the base name, and PHP turns `.`, ` ` and that lone `[` into `_`.
 fn php_key(name: &str) -> (String, Vec<String>) {
     let (base, rest) = match name.find('[') {
@@ -112,7 +127,7 @@ fn php_key(name: &str) -> (String, Vec<String>) {
 /// the next integer key, `[k]` nests.
 pub fn php_insert(root: &mut Map<String, Value>, name: &str, value: Value) {
     let (base, segs) = php_key(name);
-    if base.is_empty() {
+    if base.is_empty() || segs.len() > MAX_INPUT_NESTING {
         return;
     }
     let mut cur = root;
@@ -124,8 +139,21 @@ pub fn php_insert(root: &mut Map<String, Value>, name: &str, value: Value) {
         }
         let Value::Object(next) = slot else { return };
         key = if seg.is_empty() {
-            let max = next.keys().filter_map(|k| k.parse::<u64>().ok()).max();
-            max.map_or(0, |m| m + 1).to_string()
+            // PHP's next index: one past the largest integer key. Only
+            // canonical integers count ("05" is a string key in PHP). Past
+            // PHP_INT_MAX, PHP drops the value ("next element is already
+            // occupied").
+            let max = next
+                .keys()
+                .filter_map(|k| k.parse::<i64>().ok().filter(|n| n.to_string() == *k))
+                .max();
+            match max {
+                None => "0".to_string(),
+                Some(m) => match m.checked_add(1) {
+                    Some(n) => n.to_string(),
+                    None => return,
+                },
+            }
         } else {
             seg
         };
@@ -279,6 +307,8 @@ async fn read_multipart<S: Send + Sync>(req: Request, state: &S) -> Result<Input
     };
     let mut fields = Map::new();
     let mut files = Vec::new();
+    let mut text_vars = 0usize;
+    let mut real_files = 0usize;
     loop {
         let field = match multipart.next_field().await {
             Ok(Some(f)) => f,
@@ -304,7 +334,15 @@ async fn read_multipart<S: Send + Sync>(req: Request, state: &S) -> Result<Input
         let Ok(bytes) = field.bytes().await else {
             break;
         };
-        if file_name.is_some() {
+        if let Some(fname) = &file_name {
+            // Only parts with a file name count toward the cap (probed on
+            // Laravel: 20 empty-name parts don't use it up).
+            if !fname.is_empty() {
+                real_files += 1;
+                if real_files > MAX_FILE_UPLOADS {
+                    continue;
+                }
+            }
             files.push((
                 name,
                 UploadedFile {
@@ -314,6 +352,10 @@ async fn read_multipart<S: Send + Sync>(req: Request, state: &S) -> Result<Input
                 },
             ));
         } else {
+            text_vars += 1;
+            if text_vars > MAX_MULTIPART_VARS {
+                continue;
+            }
             let text = String::from_utf8_lossy(&bytes).into_owned();
             php_insert(&mut fields, &name, Value::String(text));
         }
@@ -428,5 +470,28 @@ mod tests {
         );
         let (_, f) = php_disposition(b"form-data; name=\"file\"; filename=\"caf\xe9.png\"");
         assert_eq!(f.unwrap(), b"caf\xe9.png");
+    }
+
+    #[test]
+    fn php_input_limits() {
+        let deep = |n: usize| format!("a{}=x", "[b]".repeat(n));
+        let ok = form_input(deep(MAX_INPUT_NESTING).as_bytes());
+        assert!(ok.contains_key("a"));
+        let dropped = form_input(deep(MAX_INPUT_NESTING + 1).as_bytes());
+        assert!(dropped.is_empty());
+        // 20,000 levels: dropped, not a stack overflow.
+        assert!(form_input(deep(20_000).as_bytes()).is_empty());
+        let many: Vec<String> = (0..1005).map(|i| format!("v{i}=1")).collect();
+        let m = form_input(many.join("&").as_bytes());
+        assert_eq!(m.len(), MAX_FORM_VARS);
+        assert!(m.contains_key("v1000") && !m.contains_key("v1001"));
+        let appends = vec!["a[]=1"; 1005].join("&");
+        assert_eq!(
+            form_input(appends.as_bytes())["a"]
+                .as_array()
+                .unwrap()
+                .len(),
+            MAX_FORM_VARS
+        );
     }
 }

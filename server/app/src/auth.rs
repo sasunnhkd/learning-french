@@ -290,7 +290,12 @@ pub async fn login(
         .editor_password
         .as_ref()
         .is_some_and(|expected| {
-            constant_time_eq(expected.expose().as_bytes(), password.as_bytes())
+            // Compare digests: fixed 32 bytes, so timing doesn't reveal the
+            // password's length (PHP's hash_equals does; Phase 5 audit).
+            constant_time_eq(
+                &Sha256::digest(expected.expose().as_bytes()),
+                &Sha256::digest(password.as_bytes()),
+            )
         });
     if !ok {
         return Err(AppError::Validation(ValidationErrors::single(

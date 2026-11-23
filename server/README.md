@@ -12,6 +12,7 @@ This folder is a Cargo workspace for the 1:1 Rust port of `backend/`
 | `contract/run.sh` | Builds a temp sandbox (copy of `backend/`, `src/chapters.json`, an empty `public/uploads/`, a fresh SQLite made by Laravel's `migrate --seed`), starts one server on `127.0.0.1:8791` with a 600 s hard deadline, then runs the suite. It never touches the real `src/` or `public/`. |
 | `contract/run-laravel.sh`, `run-rust.sh` | `run.sh laravel` and `run.sh rust` |
 | `contract/ported.txt` | Contract tests the Rust app must pass so far |
+| `contract/bench.sh` | Latency comparison with `ab`: Laravel (`php -S`) and a release build of Rust on fresh sandboxes (Phase 5, `docs/migration/AUDIT_REPORT.md` §4) |
 | `contract/export-cmp.sh` | Exports from the same seed on both apps and `cmp`s the two `src/chapters.json` files (slice 3.5 acceptance) |
 | `scripts/osv-audit.py` | OSV advisory check of `Cargo.lock`, plus the banned-crate list. Run it after every lockfile change. |
 | `scripts/sqlx-prepare.sh` | Regenerate or `--check` the offline query data in `app/.sqlx` |

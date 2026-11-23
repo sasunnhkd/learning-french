@@ -84,7 +84,10 @@ pub fn routing_path(raw: &str) -> Option<String> {
         if c.is_ascii_alphanumeric() || matches!(c, b'-' | b'.' | b'_' | b'~' | b'/') {
             out.push(char::from(c));
         } else {
-            out.push_str(&format!("%{c:02X}"));
+            const HEX: &[u8; 16] = b"0123456789ABCDEF";
+            out.push('%');
+            out.push(char::from(HEX[usize::from(c >> 4)]));
+            out.push(char::from(HEX[usize::from(c & 15)]));
         }
     }
     Some(out)

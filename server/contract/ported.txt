@@ -96,3 +96,6 @@ non_utf8_file_name
 export_writes_file_and_returns_chapters
 export_reports_unwritable_file
 export_escaping_and_text_position
+every_api_route_is_guarded_like_laravel
+form_input_limits_like_php
+file_part_cap_like_php

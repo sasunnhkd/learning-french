@@ -54,8 +54,8 @@ Running the suite against Laravel with `TARGET=rust` fails exactly the
 - K4: 3
 - K6, K7, K11, K12, K14, K15, K17, K18, K19: 1 each
 
-The other 64 of the 80 contract tests pass, which shows the shared tests make
-no Laravel-only assumptions. Checked 2026-11-23, slice 3.5.
+The other 67 of the 83 contract tests pass, which shows the shared tests make
+no Laravel-only assumptions. Checked 2026-11-23, Phase 5.
 
 Correction: earlier docs and commit messages overcounted this list by one.
 Phase 1 had 10 tagged tests, not 11; its first run had 9, not 10. The

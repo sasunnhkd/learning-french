@@ -149,6 +149,7 @@ taken from the validated data.
   - **merges the query string** (K14);
   - reads JSON when Content-Type contains `/json` or `+json`, charset parameters allowed. JSON that isn't an object is cast to a PHP array (`["x"]` → `{0: "x"}`; a scalar `"x"` → `{0: "x"}`);
   - reads `application/x-www-form-urlencoded` and multipart text fields with PHP `parse_str` rules: `password[]=x` is an array, and the last duplicate key wins;
+  - applies PHP's input limits (probed in Phase 5): names nested deeper than 64 levels are dropped; a urlencoded body keeps 1001 fields, a multipart body 1000 text fields (files don't count), and at most 20 file parts with a file name (empty-name parts don't count). `php -S` prints the "Input variables exceeded" warning as HTML before the JSON;
   - ignores any other Content-Type (`text/plain`, none).
 
   Rust copies all of this except the query string: `server/app/src/input.rs`.
@@ -384,7 +385,7 @@ mail providers.
 - Result on 2026-11-19 (`composer test`):
   `{"tool":"phpunit","result":"passed","tests":2,"passed":2,"assertions":2,"duration_ms":89}`.
 - **No API route has a PHPUnit test.** Since Phase 1, the oracle is the
-  black-box contract suite `server/contract/`: 80 HTTP tests (as of slice 3.5), all green
+  black-box contract suite `server/contract/`: 83 HTTP tests (as of Phase 5), all green
   against Laravel. See MIGRATION_PLAN.md §4.
 - SPA: no test runner. `spec/tools/check.mjs` checks content (Node, no deps).
 

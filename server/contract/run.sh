@@ -28,7 +28,9 @@
 #   BASE_URL, EDITOR_PASSWORD, TARGET, SANDBOX_ROOT, CONTRACT_DB
 #
 # Server rules (global): binds 127.0.0.1 and is killed at a hard deadline
-# (CONTRACT_DEADLINE seconds, default 600). The Rust server also gets
+# (CONTRACT_DEADLINE seconds, default 600). CONTRACT_RELEASE=1 runs a release
+# build of the Rust server (bench.sh). CONTRACT_FRONTEND_ORIGIN adds a CORS
+# origin (a dev SPA on another port, for a smoke test). The Rust server also gets
 # IDLE_TIMEOUT_SECS=600 and LOGIN_RATE_LIMIT=0 (the suite logs in ~70
 # times). Set KEEP_SANDBOX=1 to keep the temp dir.
 set -euo pipefail
@@ -144,8 +146,13 @@ if [ "$TARGET" = "laravel" ]; then
     exec "$PHP" -S "127.0.0.1:$PORT" "$SANDBOX/backend/vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php"
   ) >"$SANDBOX/server.log" 2>&1 &
 else
-  cargo build --quiet --manifest-path "$REPO/server/Cargo.toml" -p grammaire-server
-  BIN="$REPO/server/target/debug/grammaire-server"
+  if [ "${CONTRACT_RELEASE:-0}" = "1" ]; then
+    cargo build --quiet --release --manifest-path "$REPO/server/Cargo.toml" -p grammaire-server
+    BIN="$REPO/server/target/release/grammaire-server"
+  else
+    cargo build --quiet --manifest-path "$REPO/server/Cargo.toml" -p grammaire-server
+    BIN="$REPO/server/target/debug/grammaire-server"
+  fi
   # cwd = sandbox root: no .env there, and REPO_ROOT is explicit anyway.
   (
     cd "$SANDBOX"
@@ -154,6 +161,7 @@ else
       BIND_ADDR="127.0.0.1:$PORT" \
       EDITOR_PASSWORD="$EDITOR_PASSWORD" \
       FRONTEND_BASE_URL="http://localhost:5173/learning-french" \
+      FRONTEND_ORIGIN="${CONTRACT_FRONTEND_ORIGIN:-}" \
       REPO_ROOT="$SANDBOX" \
       IDLE_TIMEOUT_SECS=600 \
       LOGIN_RATE_LIMIT=0 \

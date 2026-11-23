@@ -6,12 +6,13 @@ This folder is a Cargo workspace for the 1:1 Rust port of `backend/`
 
 | Path | What it is |
 |---|---|
-| `app/` | `grammaire-server`, the Axum server. Ported so far: auth (login, logout, Sanctum tokens, login rate limit), uploads (`uploads.rs`), all chapter routes (`chapters.rs`) with Laravel's validator (`validation.rs`, `php.rs`), and Laravel's path handling (`paths.rs`). Export returns 501 to signed-in users until slice 3.5 lands. |
+| `app/` | `grammaire-server`, the Axum server. Ported so far: auth (login, logout, Sanctum tokens, login rate limit), uploads (`uploads.rs`), all chapter routes (`chapters.rs`) with Laravel's validator (`validation.rs`, `php.rs`), Laravel's path handling (`paths.rs`), and export (`export.rs`). Every Laravel route is ported. |
 | `app/migrations/` | Laravel's exact DDL as a sqlx baseline, for fresh and test databases **only**. The server never migrates the real file. |
 | `contract/` | Black-box HTTP parity suite. It runs unchanged against Laravel and Rust, with a `TARGET` switch for the differences listed in `docs/migration/KNOWN_ISSUES.md`. |
 | `contract/run.sh` | Builds a temp sandbox (copy of `backend/`, `src/chapters.json`, an empty `public/uploads/`, a fresh SQLite made by Laravel's `migrate --seed`), starts one server on `127.0.0.1:8791` with a 600 s hard deadline, then runs the suite. It never touches the real `src/` or `public/`. |
 | `contract/run-laravel.sh`, `run-rust.sh` | `run.sh laravel` and `run.sh rust` |
 | `contract/ported.txt` | Contract tests the Rust app must pass so far |
+| `contract/export-cmp.sh` | Exports from the same seed on both apps and `cmp`s the two `src/chapters.json` files (slice 3.5 acceptance) |
 | `scripts/osv-audit.py` | OSV advisory check of `Cargo.lock`, plus the banned-crate list. Run it after every lockfile change. |
 | `scripts/sqlx-prepare.sh` | Regenerate or `--check` the offline query data in `app/.sqlx` |
 

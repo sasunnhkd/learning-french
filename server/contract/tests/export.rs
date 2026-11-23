@@ -73,3 +73,67 @@ fn export_reports_unwritable_file() {
     assert_eq!(body["written"], json!(false));
     assert_eq!(std::fs::read(&file).unwrap(), before, "file untouched");
 }
+
+/// Deletes `contract-export` and re-exports on drop, so a failed assertion
+/// can't leave a text `position` behind (it would make `max(position)` read
+/// as 0 in later tests) or the export file out of seed state.
+struct ExportFixture<'a> {
+    c: &'a Ctx,
+    token: &'a str,
+}
+
+impl Drop for ExportFixture<'_> {
+    fn drop(&mut self) {
+        let _ = self
+            .c
+            .delete("/api/chapters/contract-export")
+            .bearer(self.token)
+            .send();
+        let _ = self.c.post("/api/export").bearer(self.token).send();
+    }
+}
+
+/// The file is PHP's pretty print byte for byte, also for strings that
+/// need escaping (controls, U+2028/U+2029) and ones that don't (`/`, é,
+/// emoji, DEL). A chapter whose `position` reorder left as text (K8) is
+/// exported last with position 0, like the index.
+#[test]
+fn export_escaping_and_text_position() {
+    let c = Ctx::from_env();
+    let t = c.login();
+    let tricky =
+        "a/b é 😀 x\u{2028}y\u{2029}z \"q\" \\ n\nt\tr\rb\u{8}f\u{c} \u{1}\u{1f}\u{7f} end";
+    let chapter = json!({
+        "id": "contract-export", "number": 950, "section": tricky, "title": tricky, "titleEm": tricky,
+        "lesson": { "intro": tricky, "formation": [tricky], "irregulars": [], "triggers": [] },
+        "items": [{ "type": "qcm", "rule": tricky }]
+    });
+    let _guard = ExportFixture { c: &c, token: &t };
+    c.post("/api/chapters")
+        .bearer(&t)
+        .json(&chapter)
+        .send()
+        .expect(201);
+    c.post("/api/chapters/reorder")
+        .bearer(&t)
+        .json(&json!({ "order": { "x": "contract-export" } }))
+        .send()
+        .expect(200);
+    let body = c.post("/api/export").bearer(&t).send().expect(200);
+    let written = std::fs::read(c.sandbox.join("src/chapters.json")).expect("export file");
+    let last = body["chapters"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(
+        (&last["id"], &last["position"]),
+        (&json!("contract-export"), &json!(0))
+    );
+    assert_eq!(last["title"], tricky);
+    let want = php_pretty(&body["chapters"]);
+    assert!(
+        written == want,
+        "export file differs from PHP pretty print (first diff at byte {:?})",
+        written.iter().zip(&want).position(|(a, b)| a != b)
+    );
+    let text = String::from_utf8(written).unwrap();
+    let want_line = "\"a/b é 😀 x\\u2028y\\u2029z \\\"q\\\" \\\\ n\\nt\\tr\\rb\\bf\\f \\u0001\\u001f\u{7f} end\"";
+    assert!(text.contains(want_line), "escaped section line");
+}

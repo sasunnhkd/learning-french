@@ -389,6 +389,65 @@ pub fn snake_words(s: &str) -> String {
     out.to_lowercase().replace('_', " ")
 }
 
+/// `json_encode($v, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE |
+/// JSON_UNESCAPED_SLASHES) . "\n"`: 4-space indent, `": "` after keys,
+/// `[]`/`{}` for empty containers, raw UTF-8 and `/`, but U+2028 and U+2029
+/// still escaped (no `JSON_UNESCAPED_LINE_TERMINATORS`). Control characters
+/// are escaped as PHP does (`\n`, `\t`, … and `\u001f` in lowercase hex),
+/// which is what serde_json writes too. Numbers are written as stored
+/// (KNOWN_ISSUES K16).
+pub fn json_pretty(v: &Value) -> String {
+    fn string(s: &str, out: &mut String) {
+        let quoted = serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into());
+        out.push_str(
+            &quoted
+                .replace('\u{2028}', "\\u2028")
+                .replace('\u{2029}', "\\u2029"),
+        );
+    }
+    fn write(v: &Value, depth: usize, out: &mut String) {
+        let pad = |out: &mut String, d: usize| out.push_str(&"    ".repeat(d));
+        match v {
+            Value::String(s) => string(s, out),
+            Value::Array(items) if items.is_empty() => out.push_str("[]"),
+            Value::Object(map) if map.is_empty() => out.push_str("{}"),
+            Value::Array(items) => {
+                out.push_str("[\n");
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(",\n");
+                    }
+                    pad(out, depth + 1);
+                    write(item, depth + 1, out);
+                }
+                out.push('\n');
+                pad(out, depth);
+                out.push(']');
+            }
+            Value::Object(map) => {
+                out.push_str("{\n");
+                for (i, (k, item)) in map.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(",\n");
+                    }
+                    pad(out, depth + 1);
+                    string(k, out);
+                    out.push_str(": ");
+                    write(item, depth + 1, out);
+                }
+                out.push('\n');
+                pad(out, depth);
+                out.push('}');
+            }
+            other => out.push_str(&other.to_string()),
+        }
+    }
+    let mut out = String::new();
+    write(v, 0, &mut out);
+    out.push('\n');
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,5 +564,20 @@ mod tests {
         assert_eq!(snake_words("items.a  b.Éx"), "items.a b.éx");
         assert_eq!(snake_words("items.aB.x_y"), "items.a b.x y");
         assert_eq!(snake_words("items.AB"), "items. a b");
+    }
+
+    #[test]
+    fn pretty_json_like_php() {
+        let v = json!([{ "a": [], "b": {}, "c": [1, "x/é\u{2028}\n\u{1f}\u{7f}"], "d": null }]);
+        assert_eq!(
+            json_pretty(&v),
+            "[\n    {\n        \"a\": [],\n        \"b\": {},\n        \"c\": [\n            1,\n            \"x/é\\u2028\\n\\u001f\u{7f}\"\n        ],\n        \"d\": null\n    }\n]\n"
+        );
+        assert_eq!(json_pretty(&json!([])), "[]\n");
+        // Numbers as stored (K16): PHP would write 1, 1.0e-7, 1.0e+25.
+        assert_eq!(
+            json_pretty(&json!([1.0, 1e-7, 1e25, 12_345_678_901_234_567_890_u64])),
+            "[\n    1.0,\n    1e-7,\n    1e+25,\n    12345678901234567890\n]\n"
+        );
     }
 }

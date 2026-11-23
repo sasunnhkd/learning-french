@@ -325,6 +325,8 @@ None of these exist:
   - Encoding: `json_encode(PRETTY_PRINT | UNESCAPED_UNICODE | UNESCAPED_SLASHES) . "\n"`, which gives a 4-space indent.
   - Write errors are suppressed (`@`) and reported only as `written: false`. The status stays 200.
   - The response also returns the absolute `path`.
+  - Rows: `Chapter::orderBy('position')->orderBy('number')->get()`, i.e. `select * from "chapters" order by "position" asc, "number" asc`, in the `show` shape.
+  - Rust: `server/app/src/export.rs` (`run`) and `php::json_pretty`. The exported file is byte-identical to Laravel's for the seed (checked with `cmp` in slice 3.5). Differences: relative `path` (K6), numbers as stored (K16).
 - **Disks:** `local` (`storage/app/private`, served at F4/F5), `public`.
   The app uses neither: uploads bypass the Storage facade.
 - **Cache:** configured as `database`, never used by the app.
@@ -382,7 +384,7 @@ mail providers.
 - Result on 2026-11-19 (`composer test`):
   `{"tool":"phpunit","result":"passed","tests":2,"passed":2,"assertions":2,"duration_ms":89}`.
 - **No API route has a PHPUnit test.** Since Phase 1, the oracle is the
-  black-box contract suite `server/contract/`: 79 HTTP tests (as of slice 3.4), all green
+  black-box contract suite `server/contract/`: 80 HTTP tests (as of slice 3.5), all green
   against Laravel. See MIGRATION_PLAN.md §4.
 - SPA: no test runner. `spec/tools/check.mjs` checks content (Node, no deps).
 

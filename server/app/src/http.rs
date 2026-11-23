@@ -21,18 +21,17 @@
 //! the 405 messages quote the raw request path (`paths::raw_path`), not the
 //! rewritten one.
 //!
-//! To port a slice, replace its `protected_stub` handler below
-//! with the real handler module, and add its contract tests to
+//! Every Laravel route is ported (slices 3.1–3.5). To add a route, add its
+//! handler module here and its contract tests to
 //! `server/contract/ported.txt`.
 
-use crate::auth::AuthUser;
 use crate::config::Config;
 use crate::cors::{self, Cors};
 use crate::db;
 use crate::error::{AppError, laravel_path};
 use crate::idle::Activity;
 use crate::limiter::LoginLimiter;
-use crate::{auth, chapters, paths, uploads};
+use crate::{auth, chapters, export, paths, uploads};
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
@@ -98,7 +97,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/uploads", get(uploads::index).post(uploads::store))
         .route("/api/uploads/{id}", axum::routing::delete(uploads::destroy))
-        .route("/api/export", post(protected_stub))
+        .route("/api/export", post(export::run))
         .fallback(route_not_found)
         .with_state(state);
 
@@ -142,11 +141,6 @@ async fn route_not_found(req: Request) -> AppError {
     AppError::RouteNotFound {
         path: laravel_path(&paths::raw_path(&req)),
     }
-}
-
-/// Protected route whose slice is not ported yet: guests get 401 first.
-async fn protected_stub(_user: AuthUser) -> AppError {
-    AppError::NotImplemented
 }
 
 async fn touch_activity(

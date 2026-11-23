@@ -49,9 +49,6 @@ pub enum AppError {
     UploadPathOutside,
     #[error("Too Many Attempts.")]
     TooManyAttempts { retry_after_secs: u64 },
-    /// Route exists but its slice is not ported yet (removed by end of Phase 3).
-    #[error("Not implemented yet.")]
-    NotImplemented,
     #[error("Server Error")]
     Internal(#[from] anyhow::Error),
 }
@@ -68,7 +65,6 @@ impl AppError {
             AppError::PostTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::TooManyAttempts { .. } => StatusCode::TOO_MANY_REQUESTS,
-            AppError::NotImplemented => StatusCode::NOT_IMPLEMENTED,
             AppError::Internal(_) | AppError::UploadPathOutside => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }

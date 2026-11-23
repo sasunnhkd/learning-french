@@ -29,7 +29,7 @@ The contract suite in `server/contract/` switches its expectation on
 | K12 | Scaffold routes answer even though nothing uses them: `GET /` (Blade welcome, 200 HTML) and `GET /sanctum/csrf-cookie` (204). | **Approved fix** (Q6, 2026-11-20: drop) | 404 | `framework::scaffold_routes` |
 | K14 | Laravel's `$request->all()` merges the **query string** into the input. `POST /api/auth/login?password=…` with an empty body logs in, so the password lands in access and proxy logs. Found in slice 3.1. | **Approved fix** (2026-11-20) | Every route's input comes from the body only: JSON, form or multipart (`server/app/src/input.rs`). A query-string password gets 422 `The password field is required.` | `auth::login_password_in_query_string` |
 | K15 | `Authorization: Bearer <token> ` with a **trailing** space: PHP's built-in server keeps the space, so the token doesn't match (401). This is the HTTP stack, not Laravel code. | **Approved: accept** (2026-11-20) | hyper strips the whitespace around header values (RFC 9110 §5.5), so the token is valid (200). A leading extra space (`Bearer  x`) is still 401 on both. | `auth::bearer_with_extra_spaces` |
-| K16 | Numbers inside `payload` go through PHP floats and ints: a whole float loses its `.0` (`1.0` → `1`, `1e2` → `100`), and an integer above `PHP_INT_MAX` (`12345678901234567890`) becomes a float (`1.2345678901234567e+19`). Found in slice 3.2. | **Approved: accept** (2026-11-22) | Numbers come back as stored: `1.0`, `100.0`, `12345678901234567890` exactly. A JavaScript client parses the same values either way (`1.0 === 1`), except integers above 2^53, which JS rounds in both cases. | `chapters_read::show_returns_stored_payload` |
+| K16 | Numbers inside `payload` go through PHP floats and ints: a whole float loses its `.0` (`1.0` → `1`, `1e2` → `100`), and an integer above `PHP_INT_MAX` (`12345678901234567890`) becomes a float (`1.2345678901234567e+19`). Found in slice 3.2. | **Approved: accept** (2026-11-22) | Numbers come back as stored: `1.0`, `100.0`, `12345678901234567890` exactly. A JavaScript client parses the same values either way (`1.0 === 1`), except integers above 2^53, which JS rounds in both cases. Export writes the same values as stored, so its file differs from Laravel's for three kinds of number: whole floats (`1.0`, where PHP writes `1`), exponent forms (`1e-7` and `1e+25`, where PHP writes `1.0e-7` and `1.0e+25`), and integers above `PHP_INT_MAX` (PHP writes `1.2345678901234567e+19`). The SPA's `JSON.stringify` never sends a whole float or an exponent form, the seed has none of the three, and both exported files are byte-identical (slice 3.5, `server/contract/export-cmp.sh`). | `chapters_read::show_returns_stored_payload` |
 | K17 | `json_decode` accepts 512 levels of nesting. Found in slice 3.2. | **Approved: accept** (2026-11-22) | serde_json stops at 128 levels, so a payload nested deeper reads as empty (`lesson: null`, `items: []`) and a request body nested deeper reads as empty input. The seed nests at most 6 levels. The SPA's editor (`src/admin/ChapterEditor.jsx`) builds fixed shapes a few levels deep and stores rich text as HTML strings, so it can't get near 128. Raising the limit needs serde_json's `unbounded_depth` feature, and then a deep enough body could overflow a worker stack and abort the server. | `chapters_read::show_deeply_nested_payload` |
 | K18 | `TrimStrings` trims every string before validation, so padded values pass and are saved trimmed: id `" abc "` or `"abc\n"` saves as `abc`, an item `type` of `" fill "` saves as `fill`, `number: "\f4"` saves 4, a title of 200 characters plus a trailing space fits `max:200`, an update of `abc` whose body says `" abc "` succeeds, and reorder with `" abc "` moves `abc`. Found in slice 3.3. | **Approved: accept** (2026-11-22; follows from Q2a: Rust never trims) | Values are validated as sent: those saves get 422 (`The id field format is invalid.`, `The selected items.0.type is invalid.`, `"\f4"` gets both `The number field must be an integer.` and `… must be at least 1.`, the max-length message), and reorder ignores `" abc "` (no such id). PCRE's `$` would also accept `"abc\n"`; Rust's id check doesn't copy that. The SPA sends ids from its own list and types from a select, so it never pads them. | `chapters_write::untrimmed_values_are_judged_as_sent` |
 | K19 | A multipart file name that isn't UTF-8 (`filename="caf\xe9.png"`, Latin-1) is stored as raw bytes in `original_name`. From then on `GET /api/uploads` answers 500 `Server Error` (`json_encode` fails on the name) until that upload is deleted. Found in slice 3.4. | **Approved fix** (2026-11-22) | The name is stored with U+FFFD in place of the bad bytes (`caf�.png`), and the list keeps working. Browsers send UTF-8 file names, so the SPA never hits this. | `uploads::non_utf8_file_name` |
@@ -54,8 +54,8 @@ Running the suite against Laravel with `TARGET=rust` fails exactly the
 - K4: 3
 - K6, K7, K11, K12, K14, K15, K17, K18, K19: 1 each
 
-The other 63 of the 79 contract tests pass, which shows the shared tests make
-no Laravel-only assumptions. Checked 2026-11-22, slice 3.4.
+The other 64 of the 80 contract tests pass, which shows the shared tests make
+no Laravel-only assumptions. Checked 2026-11-23, slice 3.5.
 
 Correction: earlier docs and commit messages overcounted this list by one.
 Phase 1 had 10 tagged tests, not 11; its first run had 9, not 10. The
@@ -65,4 +65,11 @@ Command:
 
 ```bash
 server/contract/run-laravel.sh -- env TARGET=rust cargo test --no-fail-fast --manifest-path server/Cargo.toml -p contract -- --test-threads=1
+```
+
+Export check (plan slice 3.5): both apps export from the same seed, and the
+files must be byte-identical. Prints `export files are identical` or fails:
+
+```bash
+server/contract/export-cmp.sh
 ```

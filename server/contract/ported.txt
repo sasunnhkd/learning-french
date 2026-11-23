@@ -91,3 +91,8 @@ original_names
 delete_when_file_is_gone
 content_disposition_parsing
 non_utf8_file_name
+
+# Slice 3.5: export (R12)
+export_writes_file_and_returns_chapters
+export_reports_unwritable_file
+export_escaping_and_text_position

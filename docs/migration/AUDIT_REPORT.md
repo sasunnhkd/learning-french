@@ -8,7 +8,8 @@ the checks; this report gives each result and every finding.
 **Summary.** Every gate is green. The audit found one high-severity bug: one
 unauthenticated request could crash the server. It is fixed and tested, along
 with three smaller issues (F2, F5, F9). Phase 5's acceptance ("all clean, or
-the findings approved") waits on four decisions:
+the findings approved"): you approved the defaults for four decisions on
+2026-11-24 (§2–§5); D1 still waits for one more package OK:
 
 - F3: the login rate limit behind nginx.
 - D1: a `url` patch update.
@@ -53,7 +54,7 @@ or the running apps.
 |---|---|---|---|
 | F1 | **High** | **Unauthenticated crash.** Form and multipart field names had no nesting limit, so `POST /api/auth/login` with a form field `a[b][b]…` 20,000 levels deep (about 60 KB) overflowed the stack in the recursive `input::finish` and **aborted the whole server**. Reproduced: Rust answered nothing and `/up` went down; Laravel answered 422. | **Fixed.** `input.rs` now applies PHP's own limits, each probed on Laravel: names deeper than 64 levels are dropped (`max_input_nesting_level`); a urlencoded body keeps its first 1001 fields and a multipart body its first 1000 text fields (`max_input_vars`, off by one on urlencoded); file parts don't count; at most 20 file parts with a file name (`max_file_uploads`; empty-name parts don't count). After the fix the same request gets 422 and the server stays up. Tests: `auth::form_input_limits_like_php` and `uploads::file_part_cap_like_php` (contract, both apps), and `input::tests::php_input_limits`. |
 | F2 | Medium | Appending with `a[]=` scanned every key each time, so it was quadratic: about 1.6 million appends in an 8 MB login body, run synchronously where the request timeout can't interrupt it. | **Fixed by F1's limit:** at most 1001 fields, so at most about 10^6 key checks. The next index now also follows PHP 8.3+ (after `-5` comes `-4`; `"05"` is a string key; past `PHP_INT_MAX` the value is dropped). |
-| F3 | Medium | **The login rate limit becomes global behind nginx.** `ClientIp` is the TCP peer, so behind a proxy on 127.0.0.1 every client shares one bucket. Five bad logins a minute from anyone lock the editor out. | **Open, your decision.** Option: trust `X-Real-IP` only when the peer is loopback, plus nginx `limit_req` on `/api/auth/login`. Belongs with the nginx config in Phase 6. Until then, `LOGIN_RATE_LIMIT=0` gives Laravel's behaviour (no limit). |
+| F3 | Medium | **The login rate limit becomes global behind nginx.** `ClientIp` is the TCP peer, so behind a proxy on 127.0.0.1 every client shares one bucket. Five bad logins a minute from anyone lock the editor out. | **Decided 2026-11-24: Phase 6.** The nginx config adds `limit_req` on `/api/auth/login`, and the app trusts `X-Real-IP` only when the TCP peer is loopback. Until then, `LOGIN_RATE_LIMIT=0` gives Laravel's behaviour (no limit). |
 | F4 | Low | Authenticated CPU cost. The validator looks up children linearly, so a body with about 10^6 `order` or `items` entries takes seconds of CPU. | **Accept:** only the editor's token can send it, and Laravel's validator has the same shape. |
 | F5 | Low | The login password compare returned early on a length mismatch, so timing revealed the length of `EDITOR_PASSWORD`. PHP's `hash_equals` leaks it the same way. | **Fixed:** the two SHA-256 digests are compared instead, so both sides are always 32 bytes. Answers are unchanged. |
 | F6 | Low | No cap on token rows (each login makes one that never expires) or on total upload size. | **Accept:** Laravel parity (K5). Only reachable after login. |
@@ -80,7 +81,7 @@ The reviewer checked these areas and found them sound:
 
 | # | Finding | Status |
 |---|---|---|
-| D1 | **`url` 2.5.8, RUSTSEC-2026-0592 (GHSA-hrj5-67jp-wqp9).** `Url::origin()` on a URL with thousands of nested `blob:` prefixes recurses until the stack overflows. `url` comes in only through sqlx, which parses `DATABASE_URL` with it. Nothing in the server or sqlx calls `Url::origin()`: the only `.origin()` call is on sqlx's own column type. So it is **not reachable**. | **Open, your decision.** Fixed in `url` 2.5.9. Your rules allow updating only a package you name, so the server hasn't been changed. Suggested: `cargo update -p url --precise 2.5.9` after the usual review. |
+| D1 | **`url` 2.5.8, RUSTSEC-2026-0592 (GHSA-hrj5-67jp-wqp9).** `Url::origin()` on a URL with thousands of nested `blob:` prefixes recurses until the stack overflows. `url` comes in only through sqlx, which parses `DATABASE_URL` with it. Nothing in the server or sqlx calls `Url::origin()`: the only `.origin()` call is on sqlx's own column type. So it is **not reachable**. | **Approved 2026-11-24: update to 2.5.9.** Vetted: same project (servo/rust-url) and publisher, no OSV advisory for 2.5.9, no compromise reported. Blocked on one more package: 2.5.9 needs `form_urlencoded` ^1.2.3, and the app pins `form_urlencoded = "=1.2.2"`, so it moves to 1.2.3 (same project and publisher, released the same day). `idna` and `percent-encoding` don't move. Waiting for your OK on `form_urlencoded`; nothing changed yet. |
 
 ## 4. Performance
 
@@ -103,7 +104,7 @@ contract suite uses, not as production numbers.
 
 | # | Finding | Status |
 |---|---|---|
-| P1 | **SQLite lock contention at 10 parallel clients:** index drops to fewer requests per second than with 1 client, and p99 reaches 96 ms. Every authenticated request writes `last_used_at` (Laravel parity), and in the default rollback-journal mode a write waits for all readers, retrying with sleeps. Confirmed on a throwaway sandbox: in WAL mode the same test gives **4,838 req/s, p50/p95/p99 2/3/4 ms** (journal mode: 1,112 req/s, 5/29/71). | **Open, your decision.** `db.rs` leaves the journal mode alone on purpose, so Laravel can still read the file for rollback. WAL keeps that working: Laravel's PDO reads WAL databases. But it changes the production file and adds `-wal`/`-shm` files, which backups and file permissions must cover. A single editor rarely sends parallel requests, so keeping the current mode is also reasonable. |
+| P1 | **SQLite lock contention at 10 parallel clients:** index drops to fewer requests per second than with 1 client, and p99 reaches 96 ms. Every authenticated request writes `last_used_at` (Laravel parity), and in the default rollback-journal mode a write waits for all readers, retrying with sleeps. Confirmed on a throwaway sandbox: in WAL mode the same test gives **4,838 req/s, p50/p95/p99 2/3/4 ms** (journal mode: 1,112 req/s, 5/29/71). | **Decided 2026-11-24: keep the rollback journal.** A single editor rarely sends parallel requests. To switch later, run `sqlite3 <db> 'pragma journal_mode=wal'` once on the server (never from the app), and make backups and file permissions cover the `-wal` and `-shm` files. |
 
 ## 5. Code quality (pedantic clippy)
 
@@ -120,7 +121,7 @@ empty, and a `format!` allocation per byte in the path rewriter (`paths.rs`).
 
 | # | Finding | Status |
 |---|---|---|
-| A | Turn on `clippy::pedantic` in CI, with the style lints above allowed by name? | **Open, your decision** for Phase 6 CI. Default: no, keep `-D warnings` on the default set. |
+| A | Turn on `clippy::pedantic` in CI, with the style lints above allowed by name? | **Decided 2026-11-24: no.** CI keeps `-D warnings` on clippy's default lints. |
 
 ## 6. Admin smoke test
 

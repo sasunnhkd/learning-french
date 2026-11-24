@@ -8,8 +8,8 @@ the checks; this report gives each result and every finding.
 **Summary.** Every gate is green. The audit found one high-severity bug: one
 unauthenticated request could crash the server. It is fixed and tested, along
 with three smaller issues (F2, F5, F9). Phase 5's acceptance ("all clean, or
-the findings approved"): you approved the defaults for four decisions on
-2026-11-24 (§2–§5); D1 still waits for one more package OK:
+the findings approved") is **met as of 2026-11-24**: you approved the
+defaults for the four decisions (§2–§5), and D1 is fixed:
 
 - F3: the login rate limit behind nginx.
 - D1: a `url` patch update.
@@ -81,7 +81,7 @@ The reviewer checked these areas and found them sound:
 
 | # | Finding | Status |
 |---|---|---|
-| D1 | **`url` 2.5.8, RUSTSEC-2026-0592 (GHSA-hrj5-67jp-wqp9).** `Url::origin()` on a URL with thousands of nested `blob:` prefixes recurses until the stack overflows. `url` comes in only through sqlx, which parses `DATABASE_URL` with it. Nothing in the server or sqlx calls `Url::origin()`: the only `.origin()` call is on sqlx's own column type. So it is **not reachable**. | **Approved 2026-11-24: update to 2.5.9.** Vetted: same project (servo/rust-url) and publisher, no OSV advisory for 2.5.9, no compromise reported. Blocked on one more package: 2.5.9 needs `form_urlencoded` ^1.2.3, and the app pins `form_urlencoded = "=1.2.2"`, so it moves to 1.2.3 (same project and publisher, released the same day). `idna` and `percent-encoding` don't move. Waiting for your OK on `form_urlencoded`; nothing changed yet. |
+| D1 | **`url` 2.5.8, RUSTSEC-2026-0592 (GHSA-hrj5-67jp-wqp9).** `Url::origin()` on a URL with thousands of nested `blob:` prefixes recurses until the stack overflows. `url` comes in only through sqlx, which parses `DATABASE_URL` with it. Nothing in the server or sqlx calls `Url::origin()`: the only `.origin()` call is on sqlx's own column type. So it is **not reachable**. | **Fixed 2026-11-24.** Updated to `url` 2.5.9 and, as it requires, `form_urlencoded` 1.2.3 (pin in `app/Cargo.toml`), both approved by you. Checked first: same project (servo/rust-url) and publisher; no OSV advisory; no reported compromise; fetched without building; no build script in either (`build = false`); about 100 changed lines, all URL-standard fixes (the `blob:` origin fix, a serializer panic replaced by clamping, parser and doc fixes), with no environment, file, network, process or `unsafe` code. Only those two lines moved in `Cargo.lock`; `idna` and `percent-encoding` stayed. Afterwards: OSV finds 0 advisories in all 198 crates, and every gate is green. |
 
 ## 4. Performance
 

@@ -317,3 +317,19 @@ async fn paths_are_decoded_like_laravel() {
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri}");
     }
 }
+
+/// Phase 5 audit F8: unsafe client request ids are replaced, not logged.
+#[tokio::test]
+async fn unsafe_request_ids_are_replaced() {
+    let (app, _db) = common::app().await;
+    for bad in ["a b", "x\ty", &"a".repeat(65), "a\"b", "{\"json\":1}"] {
+        let req = get("/up")
+            .header("x-request-id", bad)
+            .body(Body::empty())
+            .unwrap();
+        let (_, headers, _) = send(&app, req).await;
+        let id = headers["x-request-id"].to_str().unwrap();
+        assert_ne!(id, bad);
+        assert_eq!(id.len(), 36, "a UUID: {id}");
+    }
+}

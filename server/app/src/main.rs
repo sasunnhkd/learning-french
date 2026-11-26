@@ -37,6 +37,14 @@ fn init_tracing(format: LogFormat) {
 }
 
 async fn run() -> anyhow::Result<()> {
+    // `--version` / `-V`: what packaging checks the built binary reports.
+    if std::env::args()
+        .nth(1)
+        .is_some_and(|a| a == "--version" || a == "-V")
+    {
+        println!("grammaire-server {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     load_dotenv()?;
     let config = Config::from_env()?;
     init_tracing(config.log_format);
@@ -55,6 +63,10 @@ async fn run() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("cannot listen on {addr}"))?;
     tracing::info!(%addr, "listening");
+    if !addr.ip().is_loopback() {
+        // Phase 5 audit F8: the server is meant to sit behind nginx.
+        tracing::warn!(%addr, "BIND_ADDR is not a loopback address: the API is reachable without nginx");
+    }
 
     // Connect info gives the login limiter the peer address.
     axum::serve(

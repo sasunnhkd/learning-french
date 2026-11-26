@@ -30,7 +30,8 @@
 # Server rules (global): binds 127.0.0.1 and is killed at a hard deadline
 # (CONTRACT_DEADLINE seconds, default 600). CONTRACT_RELEASE=1 runs a release
 # build of the Rust server (bench.sh). CONTRACT_FRONTEND_ORIGIN adds a CORS
-# origin (a dev SPA on another port, for a smoke test). The Rust server also gets
+# origin (a dev SPA on another port, for a smoke test). CONTRACT_DB_FROM=<file>
+# starts from a copy of that database instead of the seed. The Rust server also gets
 # IDLE_TIMEOUT_SECS=600 and LOGIN_RATE_LIMIT=0 (the suite logs in ~70
 # times). Set KEEP_SANDBOX=1 to keep the temp dir.
 set -euo pipefail
@@ -137,6 +138,11 @@ EOF
   "$PHP" artisan config:clear --no-interaction >/dev/null
   "$PHP" artisan migrate --seed --force --no-interaction >/dev/null
 )
+# CONTRACT_DB_FROM: start from a copy of another database file instead of the
+# fresh seed (rollback-check.sh hands a Rust-written file to Laravel).
+if [ -n "${CONTRACT_DB_FROM:-}" ]; then
+  cp "$CONTRACT_DB_FROM" "$DB"
+fi
 
 if [ "$TARGET" = "laravel" ]; then
   # Same process `php artisan serve` starts (ServeCommand::serverCommand),

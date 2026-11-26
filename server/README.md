@@ -13,6 +13,10 @@ This folder is a Cargo workspace for the 1:1 Rust port of `backend/`
 | `contract/run-laravel.sh`, `run-rust.sh` | `run.sh laravel` and `run.sh rust` |
 | `contract/ported.txt` | Contract tests the Rust app must pass so far |
 | `contract/bench.sh` | Latency comparison with `ab`: Laravel (`php -S`) and a release build of Rust on fresh sandboxes (Phase 5, `docs/migration/AUDIT_REPORT.md` §4) |
+| `contract/rollback-check.sh` | Rust writes a database, then Laravel reads and writes the same file (Phase 6 rollback proof; `docs/migration/CUTOVER.md` §7) |
+| `packaging/` | Debian 12: `build-release.sh` (tarball; CI runs it in `rust:1.100.0-bookworm`), `grammaire-server.service`, `nginx-grammaire.conf`, `env.example`. Install: `docs/migration/CUTOVER.md` |
+| `scripts/initial-db-sql.sh` | SQL for the server's first database, from Laravel's `migrate --seed` on the current `src/chapters.json` |
+| `scripts/osv-audit.sh` | Dependency advisories from OSV for every locked crate (CI runs it) |
 | `contract/export-cmp.sh` | Exports from the same seed on both apps and `cmp`s the two `src/chapters.json` files (slice 3.5 acceptance) |
 | `scripts/osv-audit.py` | OSV advisory check of `Cargo.lock`, plus the banned-crate list. Run it after every lockfile change. |
 | `scripts/sqlx-prepare.sh` | Regenerate or `--check` the offline query data in `app/.sqlx` |

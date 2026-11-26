@@ -250,9 +250,28 @@ async fn create_token(state: &AppState, user_id: i64) -> Result<String, AppError
     Ok(format!("{id}|{plain}"))
 }
 
-/// The peer address, when the server runs with connect info (always in
-/// `main`; absent in in-process tests). No proxy headers are trusted,
-/// matching Laravel's empty `TrustProxies` list.
+/// The address the login limiter keys on (Phase 5 audit F3). Behind nginx
+/// on the same host every TCP peer is loopback, so one bucket would cover
+/// every client. When the peer is loopback, nginx's `X-Real-IP` (see
+/// `server/packaging/nginx-grammaire.conf`) is used if it parses as an IP;
+/// otherwise the peer. Only a process on the host itself can set the
+/// header, and it could reach the server directly anyway.
+pub fn client_ip(
+    peer: Option<IpAddr>,
+    real_ip: Option<&axum::http::HeaderValue>,
+) -> Option<IpAddr> {
+    match peer {
+        Some(p) if p.is_loopback() => real_ip
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<IpAddr>().ok())
+            .or(peer),
+        other => other,
+    }
+}
+
+/// The client address for the login limiter: [`client_ip`] of the peer
+/// (present when the server runs with connect info, always in `main`;
+/// absent in in-process tests) and `X-Real-IP`.
 #[derive(Debug, Clone, Copy)]
 pub struct ClientIp(pub Option<IpAddr>);
 
@@ -260,12 +279,11 @@ impl<S: Send + Sync> FromRequestParts<S> for ClientIp {
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        Ok(ClientIp(
-            parts
-                .extensions
-                .get::<ConnectInfo<SocketAddr>>()
-                .map(|c| c.0.ip()),
-        ))
+        let peer = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|c| c.0.ip());
+        Ok(ClientIp(client_ip(peer, parts.headers.get("x-real-ip"))))
     }
 }
 
@@ -368,6 +386,25 @@ mod tests {
             generate_token_string("").unwrap(),
             generate_token_string("").unwrap()
         );
+    }
+
+    #[test]
+    fn client_ip_trusts_x_real_ip_only_from_loopback() {
+        use axum::http::HeaderValue;
+        let lo: IpAddr = "127.0.0.1".parse().unwrap();
+        let ext: IpAddr = "203.0.113.9".parse().unwrap();
+        let hdr = HeaderValue::from_static("198.51.100.7");
+        let want: IpAddr = "198.51.100.7".parse().unwrap();
+        assert_eq!(client_ip(Some(lo), Some(&hdr)), Some(want));
+        assert_eq!(
+            client_ip(Some(ext), Some(&hdr)),
+            Some(ext),
+            "not from a proxy"
+        );
+        assert_eq!(client_ip(Some(lo), None), Some(lo));
+        let bad = HeaderValue::from_static("not-an-ip");
+        assert_eq!(client_ip(Some(lo), Some(&bad)), Some(lo));
+        assert_eq!(client_ip(None, Some(&hdr)), None);
     }
 
     #[test]

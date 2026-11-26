@@ -13,7 +13,7 @@
 //! | `LOG_FORMAT` | `pretty` (`json` for machines) | `LOG_CHANNEL` |
 //! | `REQUEST_TIMEOUT_SECS` | `30` | PHP `max_execution_time` |
 //! | `IDLE_TIMEOUT_SECS` | unset: never | none (local-server rule: exit when idle) |
-//! | `LOGIN_RATE_LIMIT` | `5` login attempts per minute per IP; `0` turns it off | none (K5, plan Q9) |
+//! | `LOGIN_RATE_LIMIT` | `5` login attempts per minute per IP (`X-Real-IP` when the peer is loopback, i.e. nginx: `auth::client_ip`); `0` turns it off | none (K5, plan Q9) |
 //! | `BCRYPT_ROUNDS` | `12` (4 to 31) | `BCRYPT_ROUNDS` |
 //!
 //! To add a variable: add a field here, parse it in [`Config::from_lookup`],

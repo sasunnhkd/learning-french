@@ -107,6 +107,7 @@ pub fn router(state: AppState) -> Router {
     // `method_not_allowed_body` would never see it.
     Router::new().fallback_service(routes).layer(
         ServiceBuilder::new()
+            .layer(middleware::from_fn(drop_unsafe_request_id))
             .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
             .layer(
                 TraceLayer::new_for_http()
@@ -141,6 +142,29 @@ async fn route_not_found(req: Request) -> AppError {
     AppError::RouteNotFound {
         path: laravel_path(&paths::raw_path(&req)),
     }
+}
+
+/// A client's `x-request-id` is kept (nginx can pass its `$request_id`)
+/// only when it is 1-64 characters of `A-Za-z0-9._-`; otherwise it is
+/// removed and `SetRequestIdLayer` makes a UUID. The id is logged, so this
+/// stops log forging with newlines or control characters (Phase 5 audit F8).
+pub fn is_safe_request_id(v: &[u8]) -> bool {
+    (1..=64).contains(&v.len())
+        && v.iter()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+}
+
+async fn drop_unsafe_request_id(mut req: Request, next: Next) -> Response {
+    let unsafe_id = req
+        .headers()
+        .get_all("x-request-id")
+        .iter()
+        .enumerate()
+        .any(|(i, v)| i > 0 || !is_safe_request_id(v.as_bytes()));
+    if unsafe_id {
+        req.headers_mut().remove("x-request-id");
+    }
+    next.run(req).await
 }
 
 async fn touch_activity(

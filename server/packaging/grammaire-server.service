@@ -1,0 +1,49 @@
+# systemd unit for the grammaire backoffice API on Debian 12.
+# Install: docs/migration/CUTOVER.md. Paths below are the CUTOVER defaults;
+# change them there and here together.
+[Unit]
+Description=grammaire backoffice API (Rust port of the Laravel API)
+Documentation=https://github.com/OWNER/learning-french/blob/main/docs/migration/CUTOVER.md
+After=network.target
+
+[Service]
+Type=simple
+User=grammaire
+Group=grammaire
+EnvironmentFile=/etc/grammaire-server/env
+WorkingDirectory=/var/lib/grammaire-server
+ExecStart=/opt/grammaire-server/current/bin/grammaire-server
+Restart=on-failure
+RestartSec=2
+# SIGTERM lets in-flight requests finish (graceful shutdown in main.rs).
+KillSignal=SIGTERM
+TimeoutStopSec=20
+UMask=0022
+
+# Hardening: the server only needs its database directory and the two
+# repo paths it writes (export, uploads). Every ReadWritePaths entry must
+# exist before the unit starts.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/grammaire-server /srv/grammaire/src /srv/grammaire/public/uploads
+
+[Install]
+WantedBy=multi-user.target

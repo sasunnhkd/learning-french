@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "delete from \"chapters\" where \"id\" = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "c12feb222449588df3c109018b2e62c30321921b70e6fccfc3a28e158f0ebdab"
+}

@@ -1,0 +1,101 @@
+# Contract tests the Rust app must pass so far. run-rust.sh runs exactly
+# these (libtest --exact). Add a slice's tests here when the slice lands;
+# when the list covers the whole suite, run-rust.sh --all is the gate.
+#
+# Phase 2: foundation (routing, errors, CORS, guard fails closed)
+up_returns_200
+unknown_api_route_is_404_json
+cors_preflight_allowed_origins_echo_request
+cors_preflight_unknown_origin_gets_no_allow_origin
+scaffold_routes
+guest_without_accept_header
+protected_routes_reject_guests
+wrong_method_is_405_with_allow_header
+oversized_body_is_413
+
+# Slice 3.1: auth (login, logout, token guard), plus GET /api/uploads as the
+# authenticated probe
+login_requires_password
+login_password_must_be_string
+login_wrong_password
+login_padded_password_is_not_trimmed
+login_malformed_json
+login_accepts_form_encoding
+login_token_format_and_row
+every_login_makes_a_new_token
+protected_routes_reject_bad_tokens
+token_without_id_prefix_is_accepted
+bearer_scheme_is_case_insensitive
+expired_token_is_rejected
+authenticated_request_sets_last_used_at
+logout_revokes_only_the_current_token
+deleted_user_invalidates_tokens_and_login_recreates_it
+login_password_in_query_string
+login_input_formats
+login_get_is_405
+bearer_with_extra_spaces
+laravel_minted_token_is_accepted
+server_minted_token_is_valid_in_laravel
+
+# Slice 3.2: chapters read (R3 index, R4 show, GET /api/chapters/reorder as
+# show), plus Laravel's path handling (paths.rs).
+index_shape_order_and_values
+show_matches_seed_for_every_chapter
+show_unknown_chapter_is_404
+show_returns_stored_payload
+show_deeply_nested_payload
+cors_headers_on_error_responses
+cors_simple_request_echoes_allowed_origin
+paths_are_decoded_like_laravel
+
+# Slice 3.3: chapters write (R5 store, R6 update, R7 destroy, R8 reorder),
+# the validation engine, PUT/DELETE /api/chapters/reorder as {id} routes
+reorder_path_falls_back_to_id_routes
+store_validation_all_missing
+store_validation_wrong_types
+store_validation_unique_id
+store_validation_lesson_keys_present
+store_validation_max_length_and_item_type
+store_validation_whitespace_only_is_missing
+store_keeps_payload_exactly
+round_trip_of_every_seed_chapter
+store_appends_position_and_casts_number
+update_rules
+destroy_then_404
+reorder_validation
+reorder_sets_positions_by_index
+reorder_with_object_keys
+untrimmed_values_are_judged_as_sent
+max_lengths
+max_counts_characters_not_bytes
+nested_rules_in_declaration_order
+nullable_fields_accept_null
+number_integer_forms
+position_integer_forms
+required_and_array_edge_cases
+error_order_explicit_then_wildcards
+rules_on_non_string_values
+blank_strings_count_as_null
+login_unicode_blank_password_is_checked
+
+# Slice 3.4: uploads (R10 store, R11 delete; R9 rows), sniffing, K3/K4/K7
+upload_validation
+upload_list_delete_png
+list_is_newest_first
+svg_upload
+large_uploads
+types_are_sniffed_from_content
+which_part_is_the_file
+sniffing_edges_and_php_names
+original_names
+delete_when_file_is_gone
+content_disposition_parsing
+non_utf8_file_name
+
+# Slice 3.5: export (R12)
+export_writes_file_and_returns_chapters
+export_reports_unwritable_file
+export_escaping_and_text_position
+every_api_route_is_guarded_like_laravel
+form_input_limits_like_php
+file_part_cap_like_php

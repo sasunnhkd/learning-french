@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "select t.id as \"id!\", t.tokenable_id\n                   from personal_access_tokens t\n                   join users u on u.id = t.tokenable_id\n                   where t.token = ? and t.tokenable_type = ?\n                     and (t.expires_at is null or t.expires_at >= datetime('now'))",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "personal_access_tokens",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "tokenable_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "personal_access_tokens",
+            "name": "tokenable_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "00971a6b57bdf81b53d6b88aba6a72e04f63b6f352c7ec375a0ddc1d07df8693"
+}

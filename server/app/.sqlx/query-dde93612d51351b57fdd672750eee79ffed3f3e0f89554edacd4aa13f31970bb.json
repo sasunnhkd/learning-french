@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "select cast(max(\"position\") as integer) as \"max: i64\" from \"chapters\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "max: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "dde93612d51351b57fdd672750eee79ffed3f3e0f89554edacd4aa13f31970bb"
+}

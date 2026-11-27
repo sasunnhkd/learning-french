@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "insert into \"uploads\" (\"id\", \"path\", \"original_name\", \"mime\", \"size\", \"updated_at\", \"created_at\")\n           values (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "4e7c3bfc34220517e1901d06d122e5f6543cae72eddae551ce30c58cee40a176"
+}

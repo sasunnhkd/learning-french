@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "insert into \"chapters\" (\"id\", \"number\", \"section\", \"title\", \"title_em\", \"position\", \"payload\", \"updated_at\", \"created_at\")\n           values (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "8cb3adc0c2a7f88674b747ab29b3cfa32e881f34c8ae5306bfc7b8686a3c15be"
+}

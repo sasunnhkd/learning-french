@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "delete from \"uploads\" where \"id\" = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "40ce3ee7726f308c91146af0318f109f39cc73c7443d14fef09c62a1d44812d9"
+}

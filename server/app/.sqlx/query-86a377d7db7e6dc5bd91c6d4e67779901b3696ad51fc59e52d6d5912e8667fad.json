@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "update \"chapters\" set \"position\" = ?, \"updated_at\" = datetime('now') where \"id\" = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "86a377d7db7e6dc5bd91c6d4e67779901b3696ad51fc59e52d6d5912e8667fad"
+}

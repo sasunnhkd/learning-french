@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "update personal_access_tokens set last_used_at = datetime('now'), updated_at = datetime('now') where id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "1e72052aad40873258efa0dcfe6b4a8c0155628c0a4b16598336c89fbcd3f900"
+}

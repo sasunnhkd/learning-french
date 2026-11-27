@@ -1,0 +1,98 @@
+# Rust backoffice API (server/): checks, then the Debian 12 release tarball.
+# Runs in the official Rust bookworm image, so the binary matches Debian 12's
+# glibc (2.36). Only GitHub's own actions, pinned to commits.
+# The contract suite (server/contract/) is not run here: it seeds through the
+# Laravel app in backend/, which is not in git. Run it locally before a
+# release (server/README.md).
+name: Server (Rust)
+
+on:
+  push:
+    paths:
+      - "server/**"
+      - "docs/migration/**"
+      - ".github/workflows/server.yml"
+  pull_request:
+    paths:
+      - "server/**"
+      - "docs/migration/**"
+      - ".github/workflows/server.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      # rust:1.100.0-bookworm (same toolchain as local development)
+      image: rust:1.100.0-bookworm@sha256:75d26c23c24cc6ea1cdabf0714a6bff8fd7bf3248716043fd7ae86dac7f41b94
+    env:
+      CARGO_TERM_COLOR: always
+      SQLX_OFFLINE: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends sqlite3 python3 binutils nginx openssl systemd
+          rustup component add rustfmt clippy
+
+      - name: Format
+        working-directory: server
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        working-directory: server
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Tests (app, and the contract helpers)
+        working-directory: server
+        run: cargo test --locked -p grammaire-server && cargo test --locked -p contract --lib
+
+      - name: sqlx offline data is current
+        working-directory: server
+        run: scripts/sqlx-prepare.sh --check
+
+      - name: Dependency advisories (OSV)
+        run: server/scripts/osv-audit.sh
+
+      - name: Release tarball (Debian 12)
+        env:
+          BUILD_ID: ${{ github.sha }}
+        run: server/packaging/build-release.sh
+
+      - name: nginx site passes nginx -t
+        run: |
+          d=/etc/letsencrypt/live/api.example.com
+          mkdir -p "$d"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=api.example.com \
+            -keyout "$d/privkey.pem" -out "$d/fullchain.pem"
+          cp server/packaging/nginx-grammaire.conf /etc/nginx/sites-enabled/grammaire-api
+          nginx -t
+
+      - name: systemd unit passes systemd-analyze verify
+        run: |
+          useradd --system --no-create-home grammaire
+          mkdir -p /opt/grammaire-server/current/bin /etc/grammaire-server
+          install -m 0755 server/target/release/grammaire-server /opt/grammaire-server/current/bin/
+          cp server/packaging/env.example /etc/grammaire-server/env
+          systemd-analyze verify server/packaging/grammaire-server.service
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: grammaire-server-${{ github.sha }}
+          path: |
+            server/ci-artifacts/*.tar.gz
+            server/ci-artifacts/*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
